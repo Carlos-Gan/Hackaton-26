@@ -6,6 +6,15 @@ import Dashboard from './Dashboard.jsx'
 
 const companyId = import.meta.env.VITE_COMPANY_ID
 
+function readRoute() {
+  const path = window.location.pathname.replace(/\/+$/, '') || '/chat'
+  if (path === '/chat') return { page: 'chat', tab: 'live' }
+  if (path === '/dashboard') return { page: 'dashboard', tab: 'live' }
+  const dashboardTab = path.match(/^\/dashboard\/(live|history|inventory)$/)
+  if (dashboardTab) return { page: 'dashboard', tab: dashboardTab[1] }
+  return { page: 'chat', tab: 'live' }
+}
+
 function Brand({ companyName }) {
   return (
     <div className="flex items-center gap-3">
@@ -18,8 +27,25 @@ function Brand({ companyName }) {
 }
 
 export default function App() {
-  const [page, setPage] = useState('chat')
+  const [route, setRoute] = useState(readRoute)
   const [companyName, setCompanyName] = useState('Pastelería')
+
+  function navigate(path) {
+    if (window.location.pathname !== path) window.history.pushState({}, '', path)
+    setRoute(readRoute())
+  }
+
+  useEffect(() => {
+    const currentPath = window.location.pathname.replace(/\/+$/, '') || '/'
+    if (currentPath === '/dashboard') window.history.replaceState({}, '', '/dashboard/live')
+    else if (currentPath !== '/chat' && !/^\/dashboard\/(live|history|inventory)$/.test(currentPath)) {
+      window.history.replaceState({}, '', '/chat')
+      setRoute({ page: 'chat', tab: 'live' })
+    }
+    const onPopState = () => setRoute(readRoute())
+    window.addEventListener('popstate', onPopState)
+    return () => window.removeEventListener('popstate', onPopState)
+  }, [])
 
   useEffect(() => {
     if (!db || !companyId) return
@@ -30,16 +56,16 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#f7f8f6] text-slate-800">
-      {page === 'chat' && <header className="flex min-h-[76px] items-center justify-between border-b border-slate-200 bg-white px-5 sm:px-8">
+      {route.page === 'chat' && <header className="flex min-h-[76px] items-center justify-between border-b border-slate-200 bg-white px-5 sm:px-8">
         <Brand companyName={companyName} />
         <nav className="flex items-center gap-1 rounded-xl bg-slate-100 p-1" aria-label="Navegación principal">
-          <button onClick={() => setPage('chat')} className={`rounded-lg px-4 py-2 text-sm font-medium transition ${page === 'chat' ? 'bg-white text-emerald-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}>Chat</button>
-          <button onClick={() => setPage('dashboard')} className={`rounded-lg px-4 py-2 text-sm font-medium transition ${page === 'dashboard' ? 'bg-white text-emerald-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}>Dashboard</button>
+          <button onClick={() => navigate('/chat')} className="rounded-lg bg-white px-4 py-2 text-sm font-medium text-emerald-900 shadow-sm">Chat</button>
+          <button onClick={() => navigate('/dashboard/live')} className="rounded-lg px-4 py-2 text-sm font-medium text-slate-500 transition hover:text-slate-800">Dashboard</button>
         </nav>
       </header>}
-      {page === 'chat'
+      {route.page === 'chat'
         ? <main className="grid min-h-[calc(100vh-76px)] place-items-center p-0 sm:p-8"><div className="h-[calc(100vh-76px)] w-full overflow-hidden bg-white sm:h-[844px] sm:max-h-[calc(100vh-140px)] sm:w-[390px] sm:rounded-[30px] sm:shadow-[0_24px_80px_rgba(31,41,35,.16)]"><Chat /></div></main>
-        : <Dashboard companyName={companyName} onOpenChat={() => setPage('chat')} />}
+        : <Dashboard companyName={companyName} activeTab={route.tab} onTabChange={(tab) => navigate(`/dashboard/${tab}`)} onOpenChat={() => navigate('/chat')} />}
     </div>
   )
 }

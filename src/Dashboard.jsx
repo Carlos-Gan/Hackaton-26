@@ -36,6 +36,42 @@ function timeOf(value) {
   return `${day}, ${time}`
 }
 
+function dateKey(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
+
+function deliveryDayKey(order) {
+  const value = order.entrega
+  if (typeof value === 'string') {
+    const datePart = value.match(/^(\d{4}-\d{2}-\d{2})/)
+    if (datePart) return datePart[1]
+    const base = order.creadoEn?.toDate?.() || new Date()
+    if (clean(value).includes('manana')) base.setDate(base.getDate() + 1)
+    return dateKey(base)
+  }
+  if (value?.toDate) return dateKey(value.toDate())
+  return dateKey(order.creadoEn?.toDate?.() || new Date())
+}
+
+function deliveryClock(order) {
+  if (typeof order.entrega === 'string') {
+    const timePart = order.entrega.match(/T(\d{2}:\d{2})$/)
+    if (timePart) return timePart[1]
+  }
+  return timeOf(order.entrega).split(',').at(-1).trim()
+}
+
+function clockMinutes(order) {
+  const clock = deliveryClock(order)
+  const twentyFourHour = clock.match(/^(\d{1,2}):(\d{2})$/)
+  if (twentyFourHour) return Number(twentyFourHour[1]) * 60 + Number(twentyFourHour[2])
+  const twelveHour = clock.match(/(\d{1,2}):(\d{2})\s*(a|p)\.?\s*m/i)
+  if (!twelveHour) return 0
+  let hour = Number(twelveHour[1]) % 12
+  if (twelveHour[3].toLowerCase() === 'p') hour += 12
+  return hour * 60 + Number(twelveHour[2])
+}
+
 function orderItems(order) {
   return (order.productos || []).map((item) => `${item.cantidad || 1}x ${item.nombre || 'Producto'}`).join(', ') || 'Sin detalle de productos'
 }
@@ -68,6 +104,35 @@ function OrderCard({ order, onStatus, onTicket }) {
       {stage !== workflow[3] && <label className="mt-3 block"><span className="sr-only">Cambiar estado</span><select value={stage} onChange={(event) => onStatus(order, event.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[10px] text-slate-500 outline-none focus:border-emerald-600">{workflow.map((status) => <option key={status}>{status}</option>)}</select></label>}
     </article>
   )
+}
+
+function WeeklyPlanner({ orders }) {
+  const [selectedDay, setSelectedDay] = useState(dateKey(new Date()))
+  const days = Array.from({ length: 7 }, (_, index) => {
+    const date = new Date()
+    date.setHours(0, 0, 0, 0)
+    date.setDate(date.getDate() + index)
+    const key = dateKey(date)
+    return {
+      date,
+      key,
+      label: new Intl.DateTimeFormat('es-MX', { weekday: 'short' }).format(date).replace('.', ''),
+      number: new Intl.DateTimeFormat('es-MX', { day: '2-digit', month: 'short' }).format(date),
+      count: orders.filter((order) => deliveryDayKey(order) === key).length,
+    }
+  })
+  const selectedOrders = orders
+    .filter((order) => deliveryDayKey(order) === selectedDay)
+    .sort((a, b) => clockMinutes(a) - clockMinutes(b))
+  const selectedLabel = days.find((day) => day.key === selectedDay)
+
+  return <section className="mb-6 rounded-2xl border border-slate-200 bg-white p-3.5 shadow-[0_1px_2px_rgba(15,23,42,.03)] sm:p-4">
+    <div className="flex flex-wrap items-center justify-between gap-2"><div><h3 className="text-sm font-bold text-slate-900">Agenda semanal</h3><p className="mt-0.5 text-[10px] text-slate-500">Entregas de hoy y los próximos seis días</p></div><span className="text-[10px] font-medium text-slate-500">{selectedOrders.length} {selectedOrders.length === 1 ? 'pedido' : 'pedidos'} · {selectedLabel?.number}</span></div>
+    <div className="mt-3 grid grid-cols-7 gap-1.5 sm:gap-2">{days.map((day, index) => <button key={day.key} onClick={() => setSelectedDay(day.key)} aria-pressed={selectedDay === day.key} className={`min-w-0 rounded-xl border px-1 py-2 text-center transition sm:px-2 ${selectedDay === day.key ? 'border-emerald-700 bg-emerald-700 text-white shadow-sm' : 'border-slate-200 bg-slate-50 text-slate-700 hover:border-emerald-300 hover:bg-emerald-50'}`}><span className={`block truncate text-[9px] font-semibold uppercase sm:text-[10px] ${selectedDay === day.key ? 'text-emerald-50' : 'text-slate-500'}`}>{index === 0 ? 'Hoy' : day.label}</span><span className="mt-0.5 block truncate text-[10px] font-bold sm:text-xs">{day.number}</span><span className={`mx-auto mt-1 grid size-4 place-items-center rounded-full text-[9px] font-bold sm:size-5 sm:text-[10px] ${selectedDay === day.key ? 'bg-white/20 text-white' : day.count ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-500'}`}>{day.count}</span></button>)}</div>
+    <div className="mt-3 border-t border-slate-100 pt-3">
+      {selectedOrders.length ? <div className="flex gap-2 overflow-x-auto pb-1">{selectedOrders.map((order) => <article key={order.id} className="min-w-[190px] max-w-[260px] flex-1 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2"><div className="flex items-center justify-between gap-2"><span className="text-[10px] font-bold text-emerald-800">{deliveryClock(order)}</span><span className="text-[9px] font-semibold text-slate-400">#{orderFolio(order)}</span></div><p className="mt-1 truncate text-xs font-semibold text-slate-800">{order.cliente || 'Cliente'}</p><p className="mt-0.5 truncate text-[10px] text-slate-500">{orderItems(order)}</p></article>)}</div> : <p className="py-1 text-center text-[10px] text-slate-400">No hay entregas programadas para este día.</p>}
+    </div>
+  </section>
 }
 
 function StockItem({ product, canEdit, onChange, onEdit, forecast }) {
@@ -123,7 +188,7 @@ function ProductDialog({ product, onClose, onSave, saving, error }) {
   return <div role="presentation" onClick={onClose} className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4"><section role="dialog" aria-modal="true" aria-label={editing ? 'Editar producto' : 'Agregar producto'} onClick={(event) => event.stopPropagation()} className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl"><div className="flex items-start justify-between"><div><h2 className="text-xl font-bold text-slate-900">{editing ? 'Editar producto' : 'Nuevo producto'}</h2><p className="mt-1 text-sm text-slate-500">{editing ? 'Actualiza el nombre o el precio.' : 'Se agregará al catálogo de esta empresa.'}</p></div><button type="button" onClick={onClose} className="grid size-8 place-items-center rounded-full bg-slate-100 text-slate-600">×</button></div><form onSubmit={submit} className="mt-5 space-y-4"><label className="block text-sm font-medium text-slate-700">Nombre<input required maxLength={80} value={name} onChange={(event) => setName(event.target.value)} placeholder="Pastel de Chocolate" className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-emerald-600" /></label><label className="block text-sm font-medium text-slate-700">Precio (MXN)<input required type="number" min="0.01" step="0.01" value={price} onChange={(event) => setPrice(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-emerald-600" /></label>{!editing && <><label className="block text-sm font-medium text-slate-700">Existencias<input required type="number" min="0" step="1" value={stock} onChange={(event) => setStock(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-emerald-600" /></label><label className="block text-sm font-medium text-slate-700">Unidad<select value={unit} onChange={(event) => setUnit(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-emerald-600"><option value="pzas">Piezas</option><option value="docenas">Docenas</option><option value="kg">Kilogramos</option><option value="litros">Litros</option></select></label></>}{(formError || error) && <p role="alert" className="text-sm text-rose-700">{formError || error}</p>}<button disabled={saving} className="w-full rounded-xl bg-[#087d60] px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-900 disabled:opacity-50">{saving ? 'Guardando…' : editing ? 'Guardar cambios' : 'Guardar producto'}</button></form></section></div>
 }
 
-export default function Dashboard({ companyName, onOpenChat }) {
+export default function Dashboard({ companyName, activeTab, onTabChange, onOpenChat }) {
   const [orders, setOrders] = useState([])
   const [products, setProducts] = useState([])
   const stockValues = useRef(new Map())
@@ -133,7 +198,6 @@ export default function Dashboard({ companyName, onOpenChat }) {
   const [authReady, setAuthReady] = useState(false)
   const [accessLoading, setAccessLoading] = useState(false)
   const [error, setError] = useState('')
-  const [tab, setTab] = useState('live')
   const [search, setSearch] = useState('')
   const [period, setPeriod] = useState('today')
   const [ticket, setTicket] = useState(null)
@@ -314,7 +378,7 @@ export default function Dashboard({ companyName, onOpenChat }) {
       </header>
 
       <nav className="border-b border-slate-200 bg-white px-5 lg:px-8"><div className="mx-auto flex max-w-[1800px] items-center gap-7 overflow-x-auto">
-        {[['live', '▦', 'Operación en vivo'], ['history', '◷', 'Historial de pedidos'], ['inventory', '▤', 'Inventario']].map(([key, icon, label]) => <button key={key} onClick={() => setTab(key)} className={`relative flex h-14 shrink-0 items-center gap-3 text-sm font-semibold ${tab === key ? 'text-emerald-700' : 'text-slate-500 hover:text-slate-800'}`}><span className="text-lg">{icon}</span>{label}{tab === key && <i className="absolute inset-x-0 bottom-0 h-[3px] rounded-t bg-emerald-700" />}</button>)}
+        {[['live', '▦', 'Operación en vivo'], ['history', '◷', 'Historial de pedidos'], ['inventory', '▤', 'Inventario']].map(([key, icon, label]) => <button key={key} onClick={() => onTabChange(key)} className={`relative flex h-14 shrink-0 items-center gap-3 text-sm font-semibold ${activeTab === key ? 'text-emerald-700' : 'text-slate-500 hover:text-slate-800'}`}><span className="text-lg">{icon}</span>{label}{activeTab === key && <i className="absolute inset-x-0 bottom-0 h-[3px] rounded-t bg-emerald-700" />}</button>)}
         <span className="ml-auto hidden shrink-0 items-center gap-2 py-4 text-sm text-slate-500 sm:flex">▦ <span className="capitalize">{dateText}</span></span>
         <button onClick={onOpenChat} className="ml-auto shrink-0 py-4 text-xs font-medium text-emerald-700 hover:text-emerald-900 sm:ml-0">Abrir chat</button>
         <button onClick={() => signOut(auth)} className="shrink-0 py-4 text-xs font-medium text-slate-500 hover:text-slate-900">Cerrar sesión</button>
@@ -322,22 +386,23 @@ export default function Dashboard({ companyName, onOpenChat }) {
 
       <main className="mx-auto max-w-[1800px] px-5 py-6 lg:px-8 lg:py-8">
         {error && <p role="alert" className="mb-5 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{error}</p>}
-        {tab === 'live' && <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px] 2xl:grid-cols-[minmax(0,1fr)_360px]">
+        {activeTab === 'live' && <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px] 2xl:grid-cols-[minmax(0,1fr)_360px]">
           <section className="min-w-0">
+            <WeeklyPlanner orders={orders} />
             <div className="mb-6 flex flex-wrap items-end justify-between gap-4"><div><div className="flex flex-wrap items-center gap-4"><h2 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">Tablero de Pedidos en Vivo</h2><span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700">● En vivo</span></div><p className="mt-2 text-sm text-slate-500">Cada pedido en su lugar. Todo bajo control.</p></div><label className="flex h-11 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-500">◷<select value={period} onChange={(event) => setPeriod(event.target.value)} className="bg-transparent outline-none"><option value="today">Todo el día</option><option value="week">Últimos 7 días</option><option value="all">Todo el historial</option></select></label></div>
             <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-4">{columns.map(({ status, orders: columnOrders }) => <section key={status} className="min-w-0 rounded-2xl border border-slate-200 bg-[#eff4f9] p-2.5 sm:p-3"><header className="flex items-center justify-between px-1 py-2"><h3 className="flex items-center gap-2 text-xs font-semibold text-slate-700 sm:text-sm"><i className={`size-2 rounded-full ${status === workflow[0] ? 'bg-amber-500' : status === workflow[1] ? 'bg-blue-500' : status === workflow[2] ? 'bg-emerald-500' : 'bg-slate-400'}`} />{status}</h3><span className={`grid size-7 place-items-center rounded-lg text-xs font-semibold ${status === workflow[0] ? 'bg-amber-100 text-amber-800' : status === workflow[1] ? 'bg-blue-100 text-blue-800' : status === workflow[2] ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'}`}>{columnOrders.length}</span></header><div className="space-y-2.5">{columnOrders.map((order) => <OrderCard key={order.id} order={order} onStatus={changeStatus} onTicket={setTicket} />)}{columnOrders.length === 0 && <p className="rounded-xl border border-dashed border-slate-300 bg-white/60 px-3 py-6 text-center text-xs text-slate-400">Sin pedidos</p>}</div></section>)}</div>
           </section>
           <InventoryPanel products={products} canEdit={isOwner} onChange={changeStock} forecastByProduct={forecastByProduct} onCreate={() => { setError(''); setCreateOpen(true) }} onEdit={(product) => { setError(''); setEditingProduct(product) }} />
         </div>}
 
-        {tab === 'history' && <section><div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-2xl font-bold text-slate-900">Historial de pedidos</h2><p className="mt-1 text-sm text-slate-500">Todos los pedidos de {companyName}.</p></div><span className="text-sm text-slate-500">{filteredOrders.length} resultados</span></div><div className="mt-5 overflow-hidden rounded-2xl border border-slate-200 bg-white"><div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-5 py-3">Orden</th><th className="px-5 py-3">Cliente</th><th className="px-5 py-3">Productos</th><th className="px-5 py-3">Entrega</th><th className="px-5 py-3">Total</th><th className="px-5 py-3">Estado</th><th className="px-5 py-3" /></tr></thead><tbody className="divide-y divide-slate-100">{filteredOrders.map((order) => <tr key={order.id}><td className="px-5 py-4 font-semibold">#{order.id.slice(-6).toUpperCase()}</td><td className="px-5 py-4">{order.cliente || 'Cliente'}</td><td className="max-w-xs truncate px-5 py-4 text-slate-500">{orderItems(order)}</td><td className="px-5 py-4">{timeOf(order.entrega)}</td><td className="px-5 py-4 font-semibold">{money.format(order.total || 0)}</td><td className="px-5 py-4"><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs">{order.estado}</span></td><td className="px-5 py-4"><button onClick={() => setTicket(order)} className="text-xs font-semibold text-emerald-800">Ver ticket</button></td></tr>)}</tbody></table>{filteredOrders.length === 0 && <p className="p-12 text-center text-sm text-slate-500">No hay pedidos para mostrar.</p>}</div></div></section>}
+        {activeTab === 'history' && <section><div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-2xl font-bold text-slate-900">Historial de pedidos</h2><p className="mt-1 text-sm text-slate-500">Todos los pedidos de {companyName}.</p></div><span className="text-sm text-slate-500">{filteredOrders.length} resultados</span></div><div className="mt-5 overflow-hidden rounded-2xl border border-slate-200 bg-white"><div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-5 py-3">Orden</th><th className="px-5 py-3">Cliente</th><th className="px-5 py-3">Productos</th><th className="px-5 py-3">Entrega</th><th className="px-5 py-3">Total</th><th className="px-5 py-3">Estado</th><th className="px-5 py-3" /></tr></thead><tbody className="divide-y divide-slate-100">{filteredOrders.map((order) => <tr key={order.id}><td className="px-5 py-4 font-semibold">#{order.id.slice(-6).toUpperCase()}</td><td className="px-5 py-4">{order.cliente || 'Cliente'}</td><td className="max-w-xs truncate px-5 py-4 text-slate-500">{orderItems(order)}</td><td className="px-5 py-4">{timeOf(order.entrega)}</td><td className="px-5 py-4 font-semibold">{money.format(order.total || 0)}</td><td className="px-5 py-4"><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs">{order.estado}</span></td><td className="px-5 py-4"><button onClick={() => setTicket(order)} className="text-xs font-semibold text-emerald-800">Ver ticket</button></td></tr>)}</tbody></table>{filteredOrders.length === 0 && <p className="p-12 text-center text-sm text-slate-500">No hay pedidos para mostrar.</p>}</div></div></section>}
 
-        {tab === 'inventory' && <section><div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-2xl font-bold text-slate-900">Inventario</h2><p className="mt-1 text-sm text-slate-500">Existencias y estimación según pedidos validados de los últimos 30 días.</p></div>{isOwner && <button onClick={() => { setError(''); setCreateOpen(true) }} className="rounded-xl bg-[#087d60] px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-900">＋ Agregar producto</button>}</div><div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{products.map((product) => <div key={product.id} className="rounded-2xl border border-slate-200 bg-white p-5"><StockItem product={product} canEdit={isOwner} onChange={changeStock} onEdit={setEditingProduct} forecast={forecastByProduct.get(product.id)} /><p className="mt-2 text-xs text-slate-500">{money.format(Number(product.precio) || 0)} por unidad</p></div>)}</div>{products.length === 0 && <p className="mt-5 rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center text-sm text-slate-500">Agrega productos a la subcolección productos de esta empresa.</p>}</section>}
+        {activeTab === 'inventory' && <section><div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-2xl font-bold text-slate-900">Inventario</h2><p className="mt-1 text-sm text-slate-500">Existencias y estimación según pedidos validados de los últimos 30 días.</p></div>{isOwner && <button onClick={() => { setError(''); setCreateOpen(true) }} className="rounded-xl bg-[#087d60] px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-900">＋ Agregar producto</button>}</div><div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{products.map((product) => <div key={product.id} className="rounded-2xl border border-slate-200 bg-white p-5"><StockItem product={product} canEdit={isOwner} onChange={changeStock} onEdit={setEditingProduct} forecast={forecastByProduct.get(product.id)} /><p className="mt-2 text-xs text-slate-500">{money.format(Number(product.precio) || 0)} por unidad</p></div>)}</div>{products.length === 0 && <p className="mt-5 rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center text-sm text-slate-500">Agrega productos a la subcolección productos de esta empresa.</p>}</section>}
       </main>
       <footer className="mx-auto flex max-w-[1800px] items-center justify-between px-5 pb-5 text-xs text-slate-500 lg:px-8"><span className="flex items-center gap-2"><i className="size-2 rounded-full bg-emerald-500" />Todos los cambios guardados</span><span className="hidden sm:block">Sincronización en tiempo real · {companyName}</span></footer>
 
       {toast && <div className="fixed bottom-6 left-1/2 z-40 -translate-x-1/2 rounded-full bg-slate-900 px-4 py-2.5 text-xs font-medium text-white shadow-lg">{toast}</div>}
-      {tab === 'live' && <button onClick={() => setCreateOpen(true)} className="fixed bottom-6 right-6 z-30 rounded-full bg-[#087d60] px-4 py-3 text-sm font-semibold text-white shadow-lg hover:bg-emerald-900 2xl:hidden">＋ Producto</button>}
+      {activeTab === 'live' && <button onClick={() => setCreateOpen(true)} className="fixed bottom-6 right-6 z-30 rounded-full bg-[#087d60] px-4 py-3 text-sm font-semibold text-white shadow-lg hover:bg-emerald-900 2xl:hidden">＋ Producto</button>}
       {(createOpen || editingProduct) && isOwner && <ProductDialog product={editingProduct} onClose={() => { setCreateOpen(false); setEditingProduct(null); setError('') }} onSave={saveProduct} saving={creating} error={error} />}
       {ticket && <div role="presentation" onClick={() => setTicket(null)} className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4"><section role="dialog" aria-modal="true" aria-label="Detalle del pedido" onClick={(event) => event.stopPropagation()} className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl"><div className="flex items-start justify-between"><div><p className="text-xs font-medium text-emerald-700">{companyName}</p><h2 className="mt-1 text-xl font-bold">Pedido #{ticket.id.slice(-6).toUpperCase()}</h2></div><button onClick={() => setTicket(null)} className="grid size-8 place-items-center rounded-full bg-slate-100 text-slate-600">×</button></div><div className="mt-5 space-y-3 text-sm"><p><span className="text-slate-500">Cliente:</span> {ticket.cliente || 'Pedido por chat'}</p><p><span className="text-slate-500">Entrega:</span> {timeOf(ticket.entrega)}</p><div className="border-y border-dashed border-slate-200 py-3"><p className="mb-2 text-slate-500">Productos</p><p>{orderItems(ticket)}</p></div><p className="flex justify-between text-base font-bold"><span>Total</span><span>{money.format(ticket.total || 0)} MXN</span></p><p className="text-slate-500">Estado: {ticket.estado || 'Pendiente de pago'}</p></div><button onClick={() => setTicket(null)} className="mt-5 w-full rounded-xl bg-emerald-800 px-4 py-2.5 text-sm font-semibold text-white">Cerrar</button></section></div>}
     </div>
