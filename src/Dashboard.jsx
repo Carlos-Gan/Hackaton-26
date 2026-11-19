@@ -1,0 +1,304 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { collection, doc, getDoc, increment, onSnapshot, orderBy, query, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore'
+import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth'
+import { auth, db, firebaseConfigured } from './firebase.js'
+
+const companyId = import.meta.env.VITE_COMPANY_ID
+const money = new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN', maximumFractionDigits: 0 })
+const workflow = ['Por validar pago', 'En preparación', 'Listo para entrega', 'Entregado']
+
+function clean(value = '') {
+  return value.toLocaleLowerCase('es-MX').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+}
+
+function stateOf(order) {
+  const state = clean(order.estado || '')
+  if (state.includes('entregad')) return workflow[3]
+  if (state.includes('listo')) return workflow[2]
+  if (state.includes('prepar') || state.includes('validado') || state.includes('confirmado')) return workflow[1]
+  return workflow[0]
+}
+
+function timeOf(value) {
+  if (!value) return 'Horario por confirmar'
+  if (typeof value === 'string') return value
+  const date = value.toDate?.() || new Date(value)
+  return new Intl.DateTimeFormat('es-MX', { hour: 'numeric', minute: '2-digit' }).format(date)
+}
+
+function orderItems(order) {
+  return (order.productos || []).map((item) => `${item.cantidad || 1}x ${item.nombre || 'Producto'}`).join(', ') || 'Sin detalle de productos'
+}
+
+function CakeMark() {
+  return <span className="grid size-12 shrink-0 place-items-center rounded-2xl bg-[#087d60] text-white sm:size-14"><svg viewBox="0 0 32 32" className="size-7" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 18h22l-2 10H7L5 18Z"/><path d="M4 17c0-1.7 1.3-3 3-3h18c1.7 0 3 1.3 3 3v2H4v-2Z"/><path d="M10 13c-1-3 1-5 3-5 0 2 2 2 3 2 2 0 4 1 4 3"/></svg></span>
+}
+
+function OrderCard({ order, onStatus, onTicket }) {
+  const stage = stateOf(order)
+  const pending = stage === workflow[0]
+  const invalid = clean(order.estado || '').includes('duplic') || clean(order.estado || '').includes('error')
+  return (
+    <article className={`rounded-2xl border bg-white p-3.5 shadow-[0_1px_2px_rgba(15,23,42,.03)] ${invalid ? 'border-rose-300' : 'border-slate-200'}`}>
+      <div className="flex items-center justify-between text-xs font-semibold text-slate-500"><span>#{order.id.slice(-3).toUpperCase()}</span><span className="text-base leading-none text-slate-400">≡</span></div>
+      <h4 className="mt-2 text-[15px] font-semibold text-slate-900">{order.cliente || 'Cliente'}</h4>
+      <p className="mt-2 flex items-center gap-2 text-xs font-semibold text-emerald-700"><span aria-hidden="true">◷</span>{timeOf(order.entrega)}</p>
+      <p className="mt-2 min-h-9 text-xs leading-relaxed text-slate-600">{orderItems(order)}</p>
+      <div className={`mt-2 rounded-lg px-2.5 py-2 text-[11px] font-medium ${invalid ? 'bg-rose-50 text-rose-700' : pending ? 'bg-amber-50 text-amber-800' : 'bg-emerald-50 text-emerald-700'}`}>
+        {invalid ? 'Comprobante por revisar' : pending ? '◷  Anticipo pendiente de validar' : `✓  ${order.estado || 'Pago validado'}${order.anticipo ? ` (${money.format(order.anticipo)})` : ''}`}
+      </div>
+      <div className="mt-3 flex items-center justify-between gap-2">
+        <strong className="text-sm font-bold text-slate-900">{money.format(Number(order.total) || 0)} MXN</strong>
+        <button onClick={() => onTicket(order)} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11px] font-medium text-slate-600 hover:bg-slate-50">▤ Ver ticket</button>
+      </div>
+      {stage !== workflow[3] && <label className="mt-3 block"><span className="sr-only">Cambiar estado</span><select value={stage} onChange={(event) => onStatus(order, event.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[10px] text-slate-500 outline-none focus:border-emerald-600">{workflow.map((status) => <option key={status}>{status}</option>)}</select></label>}
+    </article>
+  )
+}
+
+function StockItem({ product, canEdit, onChange, onEdit }) {
+  const stock = Number(product.stock) || 0
+  const max = Number(product.stockMaximo) || Math.max(stock, 24)
+  const percentage = Math.min((stock / max) * 100, 100)
+  const alert = stock <= 2 ? { text: 'Stock crítico', cls: 'bg-rose-50 text-rose-700', bar: 'bg-rose-500' } : stock <= 5 ? { text: 'Por agotarse', cls: 'bg-amber-50 text-amber-800', bar: 'bg-amber-500' } : { text: 'Disponible', cls: 'bg-emerald-50 text-emerald-700', bar: 'bg-emerald-500' }
+  return (
+    <div className="border-t border-slate-100 py-4 first:border-0 first:pt-0">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold text-slate-700">{product.nombre}</p><p className="mt-2 w-fit rounded-md px-2 py-1 text-[10px] font-medium"><span className={`${alert.cls} rounded-md px-2 py-1`}>{alert.text}</span></p>{canEdit && <button onClick={() => onEdit(product)} className="mt-2 text-[10px] font-semibold text-emerald-800 hover:underline">Editar nombre y precio</button>}</div>
+        <div className="flex shrink-0 overflow-hidden rounded-lg border border-slate-200"><button disabled={!canEdit || stock <= 0} onClick={() => onChange(product, -1)} aria-label={`Restar stock a ${product.nombre}`} className="grid size-9 place-items-center text-lg text-slate-600 hover:bg-slate-50 disabled:opacity-40">−</button><button disabled={!canEdit} onClick={() => onChange(product, 1)} aria-label={`Sumar stock a ${product.nombre}`} className="grid size-9 place-items-center border-l border-slate-200 text-lg text-slate-600 hover:bg-slate-50 disabled:opacity-40">+</button></div>
+      </div>
+      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100"><div className={`h-full rounded-full ${alert.bar}`} style={{ width: `${percentage}%` }} /></div>
+      <p className="mt-1.5 text-[10px] text-slate-500">{stock} {product.unidad || 'pzas'} disponibles</p>
+    </div>
+  )
+}
+
+function Login({ companyName }) {
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [loginError, setLoginError] = useState('')
+  async function login(event) {
+    event.preventDefault()
+    setLoginError('')
+    try { await signInWithEmailAndPassword(auth, email, password) }
+    catch { setLoginError('No se pudo iniciar sesión. Revisa tu correo y contraseña.') }
+  }
+  return <main className="mx-auto w-full max-w-md px-5 py-12 sm:py-20"><p className="text-sm font-medium text-emerald-800">Panel de {companyName}</p><h1 className="mt-2 text-3xl font-bold text-slate-900">Inicia sesión</h1><p className="mt-2 text-sm text-slate-500">Acceso exclusivo al equipo del negocio.</p><form onSubmit={login} className="mt-7 space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><label className="block text-sm font-medium text-slate-700">Correo<input type="email" required value={email} onChange={(event) => setEmail(event.target.value)} className="mt-1.5 block w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-emerald-600" /></label><label className="block text-sm font-medium text-slate-700">Contraseña<input type="password" required value={password} onChange={(event) => setPassword(event.target.value)} className="mt-1.5 block w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-emerald-600" /></label>{loginError && <p role="alert" className="text-sm text-rose-700">{loginError}</p>}<button className="w-full rounded-lg bg-[#087d60] px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-900">Entrar al dashboard</button></form></main>
+}
+
+function ProductDialog({ product, onClose, onSave, saving, error }) {
+  const editing = Boolean(product)
+  const [name, setName] = useState(product?.nombre || '')
+  const [price, setPrice] = useState(product?.precio ?? '')
+  const [stock, setStock] = useState(product?.stock ?? '')
+  const [unit, setUnit] = useState(product?.unidad || 'pzas')
+  const [formError, setFormError] = useState('')
+  async function submit(event) {
+    event.preventDefault()
+    if (!name.trim() || Number(price) <= 0 || Number(stock) < 0) {
+      setFormError('Escribe un nombre, un precio mayor a cero y existencias válidas.')
+      return
+    }
+    setFormError('')
+    const values = editing
+      ? { nombre: name.trim(), precio: Number(price) }
+      : { nombre: name.trim(), precio: Number(price), stock: Number(stock), stockMaximo: Math.max(Number(stock), 1), unidad: unit, activo: true, creadoEn: serverTimestamp() }
+    await onSave(values)
+  }
+  return <div role="presentation" onClick={onClose} className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4"><section role="dialog" aria-modal="true" aria-label={editing ? 'Editar producto' : 'Agregar producto'} onClick={(event) => event.stopPropagation()} className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl"><div className="flex items-start justify-between"><div><h2 className="text-xl font-bold text-slate-900">{editing ? 'Editar producto' : 'Nuevo producto'}</h2><p className="mt-1 text-sm text-slate-500">{editing ? 'Actualiza el nombre o el precio.' : 'Se agregará al catálogo de esta empresa.'}</p></div><button type="button" onClick={onClose} className="grid size-8 place-items-center rounded-full bg-slate-100 text-slate-600">×</button></div><form onSubmit={submit} className="mt-5 space-y-4"><label className="block text-sm font-medium text-slate-700">Nombre<input required maxLength={80} value={name} onChange={(event) => setName(event.target.value)} placeholder="Pastel de Chocolate" className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-emerald-600" /></label><label className="block text-sm font-medium text-slate-700">Precio (MXN)<input required type="number" min="0.01" step="0.01" value={price} onChange={(event) => setPrice(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-emerald-600" /></label>{!editing && <><label className="block text-sm font-medium text-slate-700">Existencias<input required type="number" min="0" step="1" value={stock} onChange={(event) => setStock(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-emerald-600" /></label><label className="block text-sm font-medium text-slate-700">Unidad<select value={unit} onChange={(event) => setUnit(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-emerald-600"><option value="pzas">Piezas</option><option value="docenas">Docenas</option><option value="kg">Kilogramos</option><option value="litros">Litros</option></select></label></>}{(formError || error) && <p role="alert" className="text-sm text-rose-700">{formError || error}</p>}<button disabled={saving} className="w-full rounded-xl bg-[#087d60] px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-900 disabled:opacity-50">{saving ? 'Guardando…' : editing ? 'Guardar cambios' : 'Guardar producto'}</button></form></section></div>
+}
+
+export default function Dashboard({ companyName, onOpenChat }) {
+  const [orders, setOrders] = useState([])
+  const [products, setProducts] = useState([])
+  const stockValues = useRef(new Map())
+  const [user, setUser] = useState(null)
+  const [isMember, setIsMember] = useState(false)
+  const [isOwner, setIsOwner] = useState(false)
+  const [authReady, setAuthReady] = useState(false)
+  const [accessLoading, setAccessLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [tab, setTab] = useState('live')
+  const [search, setSearch] = useState('')
+  const [period, setPeriod] = useState('today')
+  const [ticket, setTicket] = useState(null)
+  const [createOpen, setCreateOpen] = useState(false)
+  const [editingProduct, setEditingProduct] = useState(null)
+  const [creating, setCreating] = useState(false)
+  const [toast, setToast] = useState('')
+
+  useEffect(() => {
+    if (!auth) { setAuthReady(true); return }
+    return onAuthStateChanged(auth, (nextUser) => { setUser(nextUser); setAuthReady(true) })
+  }, [])
+
+  useEffect(() => {
+    if (!db || !user || !companyId) { setIsMember(false); setIsOwner(false); return }
+    let active = true
+    setAccessLoading(true)
+    getDoc(doc(db, 'empresas', companyId, 'miembros', user.uid)).then((member) => {
+      if (!active) return
+      setIsMember(member.exists())
+      setIsOwner(member.data()?.rol === 'owner')
+      setAccessLoading(false)
+    }).catch(() => {
+      if (active) { setError('No se pudo verificar tu acceso en Firestore.'); setAccessLoading(false) }
+    })
+    return () => { active = false }
+  }, [user])
+
+  useEffect(() => {
+    if (!db || !isMember || !companyId) return
+    const base = ['empresas', companyId]
+    const stopOrders = onSnapshot(query(collection(db, ...base, 'pedidos'), orderBy('creadoEn', 'desc')), (snapshot) => {
+      setOrders(snapshot.docs.map((item) => ({ id: item.id, ...item.data() })))
+      setError('')
+    }, () => setError('No se pudieron cargar los pedidos. Revisa las reglas de Firestore.'))
+    const stopProducts = onSnapshot(collection(db, ...base, 'productos'), (snapshot) => {
+      const nextProducts = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }))
+      nextProducts.forEach((item) => stockValues.current.set(item.id, Number(item.stock) || 0))
+      setProducts(nextProducts)
+    }, (firestoreError) => setError(`No se pudo cargar el inventario (${firestoreError.code || 'error'}). Revisa la regla de lectura de productos.`))
+    return () => { stopOrders(); stopProducts() }
+  }, [isMember])
+
+  const now = new Date()
+  const todayOrders = orders.filter((order) => {
+    const date = order.creadoEn?.toDate?.()
+    return date && date.toDateString() === now.toDateString()
+  })
+  const validatedRevenue = todayOrders.filter((order) => stateOf(order) !== workflow[0]).reduce((sum, order) => sum + (Number(order.total) || 0), 0)
+  const lowStock = products.filter((product) => Number(product.stock) <= 5)
+  const filteredOrders = useMemo(() => {
+    const needle = clean(search)
+    const minDate = new Date()
+    if (period === 'today') minDate.setHours(0, 0, 0, 0)
+    if (period === 'week') minDate.setDate(minDate.getDate() - 7)
+    return orders.filter((order) => {
+      const matchesSearch = !needle || clean(`${order.cliente || ''} ${order.id} ${order.folio || ''}`).includes(needle)
+      if (!matchesSearch) return false
+      if (period === 'all') return true
+      const date = order.creadoEn?.toDate?.()
+      return date && date >= minDate
+    })
+  }, [orders, search, period])
+
+  async function changeStatus(order, status) {
+    try {
+      await updateDoc(doc(db, 'empresas', companyId, 'pedidos', order.id), { estado: status })
+      setToast('Estado del pedido actualizado')
+      setTimeout(() => setToast(''), 2200)
+    } catch { setError('No se pudo actualizar el pedido. Revisa las reglas de Firestore.') }
+  }
+
+  async function changeStock(product, delta) {
+    const current = stockValues.current.get(product.id) ?? (Number(product.stock) || 0)
+    const next = current + delta
+    if (next < 0) return
+    stockValues.current.set(product.id, next)
+    setProducts((items) => items.map((item) => item.id === product.id ? { ...item, stock: next } : item))
+    try {
+      await updateDoc(doc(db, 'empresas', companyId, 'productos', product.id), { stock: increment(delta) })
+      setToast('Inventario actualizado')
+      setTimeout(() => setToast(''), 1800)
+    } catch {
+      const rolledBack = Math.max(0, (stockValues.current.get(product.id) ?? next) - delta)
+      stockValues.current.set(product.id, rolledBack)
+      setProducts((items) => items.map((item) => item.id === product.id ? { ...item, stock: rolledBack } : item))
+      setError('No se pudo actualizar el stock. Verifica que tu miembro tenga rol owner.')
+    }
+  }
+
+  async function saveProduct(productValues) {
+    setCreating(true)
+    setError('')
+    if (editingProduct) {
+      const product = editingProduct
+      setProducts((items) => items.map((item) => item.id === product.id ? { ...item, ...productValues } : item))
+      try {
+        await updateDoc(doc(db, 'empresas', companyId, 'productos', product.id), productValues)
+        setEditingProduct(null)
+        setToast('Producto actualizado')
+        setTimeout(() => setToast(''), 2200)
+      } catch {
+        setProducts((items) => items.map((item) => item.id === product.id ? product : item))
+        setError('No se pudo actualizar el producto. Verifica que tu miembro tenga rol owner y que las reglas estén publicadas.')
+      } finally { setCreating(false) }
+      return
+    }
+
+    const productRef = doc(collection(db, 'empresas', companyId, 'productos'))
+    const optimisticProduct = { id: productRef.id, ...productValues, creadoEn: new Date() }
+    stockValues.current.set(productRef.id, Number(productValues.stock) || 0)
+    setProducts((items) => [optimisticProduct, ...items])
+    try {
+      await setDoc(productRef, productValues)
+      setCreateOpen(false)
+      setToast('Producto agregado al inventario')
+      setTimeout(() => setToast(''), 2200)
+    } catch {
+      stockValues.current.delete(productRef.id)
+      setProducts((items) => items.filter((item) => item.id !== productRef.id))
+      setError('No se pudo crear el producto. Verifica que tu miembro tenga rol owner y que las reglas estén publicadas.')
+    } finally { setCreating(false) }
+  }
+
+  if (!firebaseConfigured || !companyId) return <main className="mx-auto max-w-2xl px-5 py-12"><h1 className="text-3xl font-bold">Configura Firebase</h1><p className="mt-3 text-sm text-slate-600">Completa Firebase y VITE_COMPANY_ID en .env.local.</p></main>
+  if (!authReady) return <main className="px-6 py-16 text-sm text-slate-500">Verificando sesión…</main>
+  if (!user) return <Login companyName={companyName} />
+  if (accessLoading) return <main className="px-6 py-16 text-sm text-slate-500">Verificando acceso al negocio…</main>
+  if (!isMember) return <main className="mx-auto max-w-2xl px-5 py-12"><h1 className="text-3xl font-bold">Acceso pendiente</h1><p className="mt-3 text-sm text-slate-600">Agrega un documento con este ID en <code>empresas/{companyId}/miembros</code>:</p><code className="mt-3 block break-all rounded-lg bg-slate-100 p-3 text-xs">{user.uid}</code><button onClick={() => signOut(auth)} className="mt-5 text-sm font-medium text-emerald-800">Cerrar sesión</button></main>
+
+  const dateText = new Intl.DateTimeFormat('es-MX', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }).format(now)
+  const searched = (tab === 'history' ? filteredOrders : orders)
+  const columns = workflow.map((status) => ({ status, orders: searched.filter((order) => stateOf(order) === status) }))
+
+  return (
+    <div className="min-h-[calc(100vh-76px)] bg-[#f5f8fb] text-slate-800">
+      <header className="border-b border-slate-200 bg-white px-5 py-5 lg:px-8">
+        <div className="mx-auto grid w-full max-w-[1800px] items-center gap-x-6 gap-y-5 lg:grid-cols-2 xl:grid-cols-[minmax(330px,1.1fr)_minmax(480px,1.5fr)_minmax(270px,1fr)]">
+          <div className="flex min-w-0 items-center gap-4"><CakeMark /><div className="min-w-0"><h1 className="text-xl font-bold leading-tight tracking-tight text-slate-900 2xl:text-2xl">{companyName}</h1><span className="mt-2 inline-flex items-center gap-2 rounded-lg bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-800"><i className="size-2 rounded-full bg-emerald-500" />Bot de WhatsApp Activo</span></div></div>
+          <div className="grid min-w-0 grid-cols-3 divide-x divide-slate-200">
+            <div className="min-w-0 px-2 sm:px-3"><p className="text-xs text-slate-500 sm:text-sm">Pedidos hoy</p><p className="mt-1 text-xl font-bold text-slate-900 xl:text-2xl 2xl:text-3xl">{todayOrders.length}</p></div>
+            <div className="min-w-0 px-2 sm:px-3"><p className="text-xs text-slate-500 sm:text-sm">Ingresos validados</p><p className="mt-1 break-words text-lg font-bold leading-tight text-emerald-700 xl:text-2xl 2xl:text-3xl">{money.format(validatedRevenue)} MXN</p></div>
+            <div className="min-w-0 px-2 sm:px-3"><p className="text-xs text-slate-500 sm:text-sm">Insumos bajos</p><p className="mt-1 text-xl font-bold text-amber-700 xl:text-2xl 2xl:text-3xl">{lowStock.length}</p></div>
+          </div>
+          <label className="relative min-w-0 lg:col-span-2 xl:col-span-1"><span className="sr-only">Buscar pedidos</span><svg viewBox="0 0 24 24" className="absolute left-4 top-1/2 size-5 -translate-y-1/2 text-slate-500" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 5 5"/></svg><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar cliente o n.º de orden" className="h-12 w-full rounded-xl border border-slate-200 bg-slate-50 pl-12 pr-4 text-sm outline-none placeholder:text-slate-500 focus:border-emerald-600" /></label>
+        </div>
+      </header>
+
+      <nav className="border-b border-slate-200 bg-white px-5 lg:px-8"><div className="mx-auto flex max-w-[1800px] items-center gap-7 overflow-x-auto">
+        {[['live', '▦', 'Operación en vivo'], ['history', '◷', 'Historial de pedidos'], ['inventory', '▤', 'Inventario']].map(([key, icon, label]) => <button key={key} onClick={() => setTab(key)} className={`relative flex h-14 shrink-0 items-center gap-3 text-sm font-semibold ${tab === key ? 'text-emerald-700' : 'text-slate-500 hover:text-slate-800'}`}><span className="text-lg">{icon}</span>{label}{tab === key && <i className="absolute inset-x-0 bottom-0 h-[3px] rounded-t bg-emerald-700" />}</button>)}
+        <span className="ml-auto hidden shrink-0 items-center gap-2 py-4 text-sm text-slate-500 sm:flex">▦ <span className="capitalize">{dateText}</span></span>
+        <button onClick={onOpenChat} className="ml-auto shrink-0 py-4 text-xs font-medium text-emerald-700 hover:text-emerald-900 sm:ml-0">Abrir chat</button>
+        <button onClick={() => signOut(auth)} className="shrink-0 py-4 text-xs font-medium text-slate-500 hover:text-slate-900">Cerrar sesión</button>
+      </div></nav>
+
+      <main className="mx-auto max-w-[1800px] px-5 py-6 lg:px-8 lg:py-8">
+        {error && <p role="alert" className="mb-5 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{error}</p>}
+        {tab === 'live' && <div className="grid items-start gap-6 2xl:grid-cols-[minmax(0,1fr)_360px]">
+          <section className="min-w-0">
+            <div className="mb-6 flex flex-wrap items-end justify-between gap-4"><div><div className="flex flex-wrap items-center gap-4"><h2 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">Tablero de Pedidos en Vivo</h2><span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700">● En vivo</span></div><p className="mt-2 text-sm text-slate-500">Cada pedido en su lugar. Todo bajo control.</p></div><label className="flex h-11 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-500">◷<select value={period} onChange={(event) => setPeriod(event.target.value)} className="bg-transparent outline-none"><option value="today">Todo el día</option><option value="week">Últimos 7 días</option><option value="all">Todo el historial</option></select></label></div>
+            <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-4">{columns.map(({ status, orders: columnOrders }) => <section key={status} className="min-w-0 rounded-2xl border border-slate-200 bg-[#eff4f9] p-2.5 sm:p-3"><header className="flex items-center justify-between px-1 py-2"><h3 className="flex items-center gap-2 text-xs font-semibold text-slate-700 sm:text-sm"><i className={`size-2 rounded-full ${status === workflow[0] ? 'bg-amber-500' : status === workflow[1] ? 'bg-blue-500' : status === workflow[2] ? 'bg-emerald-500' : 'bg-slate-400'}`} />{status}</h3><span className={`grid size-7 place-items-center rounded-lg text-xs font-semibold ${status === workflow[0] ? 'bg-amber-100 text-amber-800' : status === workflow[1] ? 'bg-blue-100 text-blue-800' : status === workflow[2] ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'}`}>{columnOrders.length}</span></header><div className="space-y-2.5">{columnOrders.map((order) => <OrderCard key={order.id} order={order} onStatus={changeStatus} onTicket={setTicket} />)}{columnOrders.length === 0 && <p className="rounded-xl border border-dashed border-slate-300 bg-white/60 px-3 py-6 text-center text-xs text-slate-400">Sin pedidos</p>}</div></section>)}</div>
+          </section>
+          <InventoryPanel products={products} canEdit={isOwner} onChange={changeStock} onCreate={() => { setError(''); setCreateOpen(true) }} onEdit={(product) => { setError(''); setEditingProduct(product) }} />
+        </div>}
+
+        {tab === 'history' && <section><div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-2xl font-bold text-slate-900">Historial de pedidos</h2><p className="mt-1 text-sm text-slate-500">Todos los pedidos de {companyName}.</p></div><span className="text-sm text-slate-500">{filteredOrders.length} resultados</span></div><div className="mt-5 overflow-hidden rounded-2xl border border-slate-200 bg-white"><div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-5 py-3">Orden</th><th className="px-5 py-3">Cliente</th><th className="px-5 py-3">Productos</th><th className="px-5 py-3">Entrega</th><th className="px-5 py-3">Total</th><th className="px-5 py-3">Estado</th><th className="px-5 py-3" /></tr></thead><tbody className="divide-y divide-slate-100">{filteredOrders.map((order) => <tr key={order.id}><td className="px-5 py-4 font-semibold">#{order.id.slice(-6).toUpperCase()}</td><td className="px-5 py-4">{order.cliente || 'Cliente'}</td><td className="max-w-xs truncate px-5 py-4 text-slate-500">{orderItems(order)}</td><td className="px-5 py-4">{timeOf(order.entrega)}</td><td className="px-5 py-4 font-semibold">{money.format(order.total || 0)}</td><td className="px-5 py-4"><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs">{order.estado}</span></td><td className="px-5 py-4"><button onClick={() => setTicket(order)} className="text-xs font-semibold text-emerald-800">Ver ticket</button></td></tr>)}</tbody></table>{filteredOrders.length === 0 && <p className="p-12 text-center text-sm text-slate-500">No hay pedidos para mostrar.</p>}</div></div></section>}
+
+        {tab === 'inventory' && <section><div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-2xl font-bold text-slate-900">Inventario</h2><p className="mt-1 text-sm text-slate-500">Existencias de {companyName} sincronizadas con el chat.</p></div>{isOwner && <button onClick={() => { setError(''); setCreateOpen(true) }} className="rounded-xl bg-[#087d60] px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-900">＋ Agregar producto</button>}</div><div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{products.map((product) => <div key={product.id} className="rounded-2xl border border-slate-200 bg-white p-5"><StockItem product={product} canEdit={isOwner} onChange={changeStock} onEdit={setEditingProduct} /><p className="mt-2 text-xs text-slate-500">{money.format(Number(product.precio) || 0)} por unidad</p></div>)}</div>{products.length === 0 && <p className="mt-5 rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center text-sm text-slate-500">Agrega productos a la subcolección productos de esta empresa.</p>}</section>}
+      </main>
+      <footer className="mx-auto flex max-w-[1800px] items-center justify-between px-5 pb-5 text-xs text-slate-500 lg:px-8"><span className="flex items-center gap-2"><i className="size-2 rounded-full bg-emerald-500" />Todos los cambios guardados</span><span className="hidden sm:block">Sincronización en tiempo real · {companyName}</span></footer>
+
+      {toast && <div className="fixed bottom-6 left-1/2 z-40 -translate-x-1/2 rounded-full bg-slate-900 px-4 py-2.5 text-xs font-medium text-white shadow-lg">{toast}</div>}
+      {tab === 'live' && <button onClick={() => setCreateOpen(true)} className="fixed bottom-6 right-6 z-30 rounded-full bg-[#087d60] px-4 py-3 text-sm font-semibold text-white shadow-lg hover:bg-emerald-900 2xl:hidden">＋ Producto</button>}
+      {(createOpen || editingProduct) && isOwner && <ProductDialog product={editingProduct} onClose={() => { setCreateOpen(false); setEditingProduct(null); setError('') }} onSave={saveProduct} saving={creating} error={error} />}
+      {ticket && <div role="presentation" onClick={() => setTicket(null)} className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4"><section role="dialog" aria-modal="true" aria-label="Detalle del pedido" onClick={(event) => event.stopPropagation()} className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl"><div className="flex items-start justify-between"><div><p className="text-xs font-medium text-emerald-700">{companyName}</p><h2 className="mt-1 text-xl font-bold">Pedido #{ticket.id.slice(-6).toUpperCase()}</h2></div><button onClick={() => setTicket(null)} className="grid size-8 place-items-center rounded-full bg-slate-100 text-slate-600">×</button></div><div className="mt-5 space-y-3 text-sm"><p><span className="text-slate-500">Cliente:</span> {ticket.cliente || 'Pedido por chat'}</p><p><span className="text-slate-500">Entrega:</span> {timeOf(ticket.entrega)}</p><div className="border-y border-dashed border-slate-200 py-3"><p className="mb-2 text-slate-500">Productos</p><p>{orderItems(ticket)}</p></div><p className="flex justify-between text-base font-bold"><span>Total</span><span>{money.format(ticket.total || 0)} MXN</span></p><p className="text-slate-500">Estado: {ticket.estado || 'Pendiente de pago'}</p></div><button onClick={() => setTicket(null)} className="mt-5 w-full rounded-xl bg-emerald-800 px-4 py-2.5 text-sm font-semibold text-white">Cerrar</button></section></div>}
+    </div>
+  )
+}
+
+function InventoryPanel({ products, canEdit, onChange, onCreate, onEdit }) {
+  const alerts = products.filter((product) => Number(product.stock) <= 5).length
+  return <aside className="rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_1px_2px_rgba(15,23,42,.03)] sm:p-6"><div className="flex items-start justify-between gap-3"><div><h2 className="text-xl font-bold text-slate-900">Inventario en Vivo</h2><p className="mt-1.5 text-xs text-slate-500">Ajusta existencias sin detener tu operación.</p><button disabled={!canEdit} onClick={onCreate} className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-100 disabled:hidden">＋ Agregar producto</button></div><span className={`shrink-0 rounded-lg px-2.5 py-1.5 text-[11px] font-semibold ${alerts ? 'bg-amber-50 text-amber-800' : 'bg-emerald-50 text-emerald-700'}`}>⚠ {alerts} alertas</span></div><div className="mt-5 border-t border-slate-200 pt-4">{products.slice(0, 8).map((product) => <StockItem key={product.id} product={product} canEdit={canEdit} onChange={onChange} onEdit={onEdit} />)}{products.length === 0 && <p className="py-8 text-center text-xs text-slate-500">Aún no hay productos en el inventario.</p>}</div>{!canEdit && products.length > 0 && <p className="mt-2 text-[10px] text-slate-400">Solicita el rol owner para ajustar existencias.</p>}</aside>
+}

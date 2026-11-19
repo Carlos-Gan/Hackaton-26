@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { addDoc, collection, doc, onSnapshot, query, serverTimestamp, where } from 'firebase/firestore'
+import { collection, doc, onSnapshot, query, runTransaction, serverTimestamp, where } from 'firebase/firestore'
 import { db, firebaseConfigured } from './firebase.js'
 
 const currency = new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN', maximumFractionDigits: 0 })
@@ -60,18 +60,57 @@ export default function Chat() {
     setSending(true)
     setError('')
     try {
-      const order = await addDoc(collection(db, 'empresas', companyId, 'pedidos'), {
-        cliente: 'Pedido por chat',
-        productos: chosen.map((item) => ({ productoId: item.id, nombre: item.name, precio: Number(item.price), cantidad: cart[item.id] })),
-        total,
-        entrega: deliveryTime,
-        estado: 'Pendiente de pago',
-        creadoEn: serverTimestamp(),
+      const orderRef = doc(collection(db, 'empresas', companyId, 'pedidos'))
+      const reservedTotal = await runTransaction(db, async (transaction) => {
+        const currentItems = []
+        for (const item of chosen) {
+          const productRef = doc(db, 'empresas', companyId, 'productos', item.id)
+          const productSnapshot = await transaction.get(productRef)
+          const productData = productSnapshot.data()
+          const available = Number(productData?.stock) || 0
+          if (!productSnapshot.exists() || productData?.activo !== true || cart[item.id] > available) {
+            const stockError = new Error('STOCK_INSUFFICIENT')
+            stockError.productName = item.name
+            stockError.available = available
+            throw stockError
+          }
+          currentItems.push({
+            ref: productRef,
+            id: item.id,
+            name: productData.nombre,
+            price: Number(productData.precio) || 0,
+            quantity: cart[item.id],
+            stock: available,
+          })
+        }
+
+        const productsForOrder = currentItems.map(({ id, name, price, quantity }) => ({ productoId: id, nombre: name, precio: price, cantidad: quantity }))
+        const currentTotal = productsForOrder.reduce((sum, item) => sum + item.precio * item.cantidad, 0)
+        const quantities = Object.fromEntries(currentItems.map((item) => [item.id, item.quantity]))
+
+        for (const item of currentItems) {
+          transaction.update(item.ref, { stock: item.stock - item.quantity, ultimaReserva: orderRef.id })
+        }
+        transaction.set(orderRef, {
+          cliente: 'Pedido por chat',
+          productos: productsForOrder,
+          cantidadesPorProducto: quantities,
+          reservaId: orderRef.id,
+          total: currentTotal,
+          entrega: deliveryTime,
+          estado: 'Pendiente de pago',
+          creadoEn: serverTimestamp(),
+        })
+        return currentTotal
       })
-      setSuccess(`¡Pedido guardado! Folio #${order.id.slice(-6).toUpperCase()}. Te contactaremos para confirmar el pago.`)
+      setSuccess(`¡Pedido guardado! Se reservó el stock y tu folio es #${orderRef.id.slice(-6).toUpperCase()} por ${currency.format(reservedTotal)} MXN.`)
       setCart({})
-    } catch {
+    } catch (orderError) {
+      if (orderError.message === 'STOCK_INSUFFICIENT') {
+        setError(`Stock insuficiente de ${orderError.productName}. Quedan ${orderError.available}; no se guardó el pedido.`)
+      } else {
       setError('No se pudo guardar el pedido. Revisa la conexión y las reglas de Firestore.')
+      }
     } finally {
       setSending(false)
     }

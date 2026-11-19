@@ -16,16 +16,33 @@ service cloud.firestore {
       allow create, update, delete: if isOwner(companyId);
 
       match /productos/{productId} {
-        allow read: if resource.data.activo == true;
-        allow create, update, delete: if isOwner(companyId);
+        allow read: if isMember(companyId) || resource.data.activo == true;
+        allow create, delete: if isOwner(companyId);
+        function validCheckoutDecrease() {
+          let reservationId = request.resource.data.get('ultimaReserva', '');
+          let orderPath = /databases/$(database)/documents/empresas/$(companyId)/pedidos/$(reservationId);
+          return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stock', 'ultimaReserva'])
+            && resource.data.stock is number
+            && request.resource.data.stock is number
+            && request.resource.data.stock >= 0
+            && request.resource.data.stock < resource.data.stock
+            && reservationId is string
+            && existsAfter(orderPath)
+            && getAfter(orderPath).data.reservaId == reservationId
+            && getAfter(orderPath).data.estado == 'Pendiente de pago'
+            && getAfter(orderPath).data.cantidadesPorProducto.get(productId, 0) == resource.data.stock - request.resource.data.stock;
+        }
+        allow update: if isOwner(companyId) || validCheckoutDecrease();
       }
 
       match /pedidos/{orderId} {
         allow create: if request.resource.data.keys().hasAll([
-            'cliente', 'productos', 'total', 'entrega', 'estado', 'creadoEn'
+            'cliente', 'productos', 'total', 'entrega', 'estado', 'creadoEn',
+            'cantidadesPorProducto', 'reservaId'
           ])
           && request.resource.data.keys().hasOnly([
-            'cliente', 'productos', 'total', 'entrega', 'estado', 'creadoEn'
+            'cliente', 'productos', 'total', 'entrega', 'estado', 'creadoEn',
+            'cantidadesPorProducto', 'reservaId'
           ])
           && request.resource.data.cliente is string
           && request.resource.data.productos is list
@@ -34,7 +51,10 @@ service cloud.firestore {
           && request.resource.data.total > 0
           && request.resource.data.entrega is string
           && request.resource.data.estado == 'Pendiente de pago'
-          && request.resource.data.creadoEn is timestamp;
+          && request.resource.data.creadoEn is timestamp
+          && request.resource.data.cantidadesPorProducto is map
+          && request.resource.data.cantidadesPorProducto.size() > 0
+          && request.resource.data.reservaId == orderId;
 
         allow read, update, delete: if isMember(companyId);
       }
