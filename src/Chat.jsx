@@ -4,6 +4,12 @@ import { db, firebaseConfigured } from './firebase.js'
 
 const currency = new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN', maximumFractionDigits: 0 })
 const companyId = import.meta.env.VITE_COMPANY_ID
+const localDateValue = (date = new Date()) => {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
 
 function ProductArt({ kind }) {
   return <div className={`grid h-24 place-items-center overflow-hidden rounded-t-xl ${kind === 'cookies' ? 'bg-[#f2dfbf]' : 'bg-[#f0ddc7]'}`}>
@@ -17,7 +23,9 @@ export default function Chat() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [cart, setCart] = useState({})
-  const [deliveryTime, setDeliveryTime] = useState('Hoy, 4:00 PM')
+  const [customerName, setCustomerName] = useState('')
+  const [deliveryDate, setDeliveryDate] = useState(localDateValue())
+  const [deliveryTime, setDeliveryTime] = useState('16:00')
   const [sending, setSending] = useState(false)
   const [success, setSuccess] = useState('')
 
@@ -57,6 +65,14 @@ export default function Chat() {
 
   async function submitOrder() {
     if (!db || !canOrder || sending) return
+    if (!customerName.trim()) {
+      setError('Escribe el nombre para registrar el pedido.')
+      return
+    }
+    if (!deliveryDate || deliveryDate < localDateValue() || !deliveryTime) {
+      setError('Elige una fecha y una hora válidas para la entrega.')
+      return
+    }
     setSending(true)
     setError('')
     try {
@@ -92,12 +108,12 @@ export default function Chat() {
           transaction.update(item.ref, { stock: item.stock - item.quantity, ultimaReserva: orderRef.id })
         }
         transaction.set(orderRef, {
-          cliente: 'Pedido por chat',
+          cliente: customerName.trim(),
           productos: productsForOrder,
           cantidadesPorProducto: quantities,
           reservaId: orderRef.id,
           total: currentTotal,
-          entrega: deliveryTime,
+          entrega: `${deliveryDate}T${deliveryTime}`,
           estado: 'Pendiente de pago',
           creadoEn: serverTimestamp(),
         })
@@ -105,6 +121,7 @@ export default function Chat() {
       })
       setSuccess(`¡Pedido guardado! Se reservó el stock y tu folio es #${orderRef.id.slice(-6).toUpperCase()} por ${currency.format(reservedTotal)} MXN.`)
       setCart({})
+      setCustomerName('')
     } catch (orderError) {
       if (orderError.message === 'STOCK_INSUFFICIENT') {
         setError(`Stock insuficiente de ${orderError.productName}. Quedan ${orderError.available}; no se guardó el pedido.`)
@@ -150,11 +167,16 @@ export default function Chat() {
 
         {chosen.length > 0 && <div className="ml-auto max-w-[92%] rounded-2xl rounded-tr-sm bg-[#dcf8c6] p-3 shadow-sm">
           <p className="text-[11px] font-medium text-stone-800">Quiero {chosen.map((item) => `${cart[item.id]} ${item.name}`).join(' y ')}.</p>
-          <label className="mt-3 block text-[10px] font-medium text-stone-600">¿Cuándo lo necesitas?</label>
-          <input value={deliveryTime} onChange={(event) => setDeliveryTime(event.target.value)} className="mt-1 w-full rounded-lg border border-emerald-100 bg-white/80 px-2.5 py-2 text-[11px] text-stone-800 outline-none focus:border-emerald-500" />
+          <label className="mt-3 block text-[10px] font-medium text-stone-600">¿A nombre de quién registramos el pedido?</label>
+          <input value={customerName} onChange={(event) => setCustomerName(event.target.value)} placeholder="Nombre del cliente" maxLength={80} className="mt-1 w-full rounded-lg border border-emerald-100 bg-white/80 px-2.5 py-2 text-[11px] text-stone-800 outline-none focus:border-emerald-500" />
+          <p className="mt-3 text-[10px] font-medium text-stone-600">¿Cuándo lo necesitas?</p>
+          <div className="mt-1.5 grid grid-cols-2 gap-2">
+            <label className="block min-w-0"><span className="mb-1 flex items-center gap-1 text-[9px] text-stone-500"><svg viewBox="0 0 20 20" className="size-3" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="2.5" y="4" width="15" height="13" rx="2"/><path d="M6 2.5v3M14 2.5v3M2.5 8h15"/></svg>Fecha</span><input aria-label="Fecha de entrega" type="date" min={localDateValue()} value={deliveryDate} onChange={(event) => setDeliveryDate(event.target.value)} required className="h-9 w-full min-w-0 rounded-lg border border-emerald-100 bg-white/80 px-2 text-[10px] text-stone-800 outline-none focus:border-emerald-500" /></label>
+            <label className="block min-w-0"><span className="mb-1 flex items-center gap-1 text-[9px] text-stone-500"><svg viewBox="0 0 20 20" className="size-3" fill="none" stroke="currentColor" strokeWidth="1.7"><circle cx="10" cy="10" r="7.2"/><path d="M10 5.8v4.5l3 1.8" strokeLinecap="round"/></svg>Hora</span><input aria-label="Hora de entrega" type="time" value={deliveryTime} onChange={(event) => setDeliveryTime(event.target.value)} required className="h-9 w-full min-w-0 rounded-lg border border-emerald-100 bg-white/80 px-2 text-[10px] text-stone-800 outline-none focus:border-emerald-500" /></label>
+          </div>
           <div className="mt-2 flex items-center justify-between text-[11px]"><span className="text-stone-600">Total</span><strong>{currency.format(total)} MXN</strong></div>
           {chosen.some((item) => cart[item.id] > (Number(item.stock) || 0)) && <p className="mt-2 text-[10px] text-rose-700">La cantidad supera el stock disponible. Ajusta tu pedido.</p>}
-          <button onClick={submitOrder} disabled={!canOrder || sending} className="mt-3 w-full rounded-lg bg-[#087d67] px-3 py-2.5 text-[11px] font-semibold text-white hover:bg-[#066b58] disabled:cursor-not-allowed disabled:opacity-50">{sending ? 'Guardando pedido…' : 'Confirmar pedido'}</button>
+          <button onClick={submitOrder} disabled={!canOrder || !customerName.trim() || sending} className="mt-3 w-full rounded-lg bg-[#087d67] px-3 py-2.5 text-[11px] font-semibold text-white hover:bg-[#066b58] disabled:cursor-not-allowed disabled:opacity-50">{sending ? 'Guardando pedido…' : 'Confirmar pedido'}</button>
         </div>}
 
         {error && chosen.length > 0 && <p role="alert" className="ml-auto max-w-[92%] rounded-xl bg-rose-50 p-3 text-[11px] text-rose-800">{error}</p>}

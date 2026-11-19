@@ -21,13 +21,27 @@ function stateOf(order) {
 
 function timeOf(value) {
   if (!value) return 'Horario por confirmar'
-  if (typeof value === 'string') return value
-  const date = value.toDate?.() || new Date(value)
-  return new Intl.DateTimeFormat('es-MX', { hour: 'numeric', minute: '2-digit' }).format(date)
+  let date
+  if (typeof value === 'string') {
+    const localDateTime = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/)
+    if (!localDateTime) return value
+    date = new Date(Number(localDateTime[1]), Number(localDateTime[2]) - 1, Number(localDateTime[3]), Number(localDateTime[4]), Number(localDateTime[5]))
+  } else {
+    date = value.toDate?.() || new Date(value)
+  }
+  const time = new Intl.DateTimeFormat('es-MX', { hour: 'numeric', minute: '2-digit' }).format(date)
+  const day = date.toDateString() === new Date().toDateString()
+    ? 'Hoy'
+    : new Intl.DateTimeFormat('es-MX', { day: 'numeric', month: 'short' }).format(date)
+  return `${day}, ${time}`
 }
 
 function orderItems(order) {
   return (order.productos || []).map((item) => `${item.cantidad || 1}x ${item.nombre || 'Producto'}`).join(', ') || 'Sin detalle de productos'
+}
+
+function orderFolio(order) {
+  return String(order.folio || order.numeroPedido || order.id.slice(-6).toUpperCase())
 }
 
 function CakeMark() {
@@ -40,7 +54,7 @@ function OrderCard({ order, onStatus, onTicket }) {
   const invalid = clean(order.estado || '').includes('duplic') || clean(order.estado || '').includes('error')
   return (
     <article className={`rounded-2xl border bg-white p-3.5 shadow-[0_1px_2px_rgba(15,23,42,.03)] ${invalid ? 'border-rose-300' : 'border-slate-200'}`}>
-      <div className="flex items-center justify-between text-xs font-semibold text-slate-500"><span>#{order.id.slice(-3).toUpperCase()}</span><span className="text-base leading-none text-slate-400">≡</span></div>
+      <div className="flex items-center justify-between text-xs font-semibold text-slate-500"><span>#{orderFolio(order)}</span><span className="text-base leading-none text-slate-400">≡</span></div>
       <h4 className="mt-2 text-[15px] font-semibold text-slate-900">{order.cliente || 'Cliente'}</h4>
       <p className="mt-2 flex items-center gap-2 text-xs font-semibold text-emerald-700"><span aria-hidden="true">◷</span>{timeOf(order.entrega)}</p>
       <p className="mt-2 min-h-9 text-xs leading-relaxed text-slate-600">{orderItems(order)}</p>
@@ -56,7 +70,7 @@ function OrderCard({ order, onStatus, onTicket }) {
   )
 }
 
-function StockItem({ product, canEdit, onChange, onEdit }) {
+function StockItem({ product, canEdit, onChange, onEdit, forecast }) {
   const stock = Number(product.stock) || 0
   const max = Number(product.stockMaximo) || Math.max(stock, 24)
   const percentage = Math.min((stock / max) * 100, 100)
@@ -69,6 +83,7 @@ function StockItem({ product, canEdit, onChange, onEdit }) {
       </div>
       <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100"><div className={`h-full rounded-full ${alert.bar}`} style={{ width: `${percentage}%` }} /></div>
       <p className="mt-1.5 text-[10px] text-slate-500">{stock} {product.unidad || 'pzas'} disponibles</p>
+      {forecast && <p className={`mt-2 rounded-lg px-2.5 py-2 text-[10px] leading-relaxed ${forecast.tone}`}>{forecast.message}</p>}
     </div>
   )
 }
@@ -169,14 +184,45 @@ export default function Dashboard({ companyName, onOpenChat }) {
   })
   const validatedRevenue = todayOrders.filter((order) => stateOf(order) !== workflow[0]).reduce((sum, order) => sum + (Number(order.total) || 0), 0)
   const lowStock = products.filter((product) => Number(product.stock) <= 5)
+  const forecastByProduct = useMemo(() => {
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000
+    const sales = new Map()
+    for (const order of orders) {
+      const date = order.creadoEn?.toDate?.()
+      if (!date || date.getTime() < cutoff || stateOf(order) === workflow[0] || clean(order.estado || '').includes('cancel')) continue
+      for (const item of order.productos || []) {
+        if (!item.productoId) continue
+        const record = sales.get(item.productoId) || { units: 0, days: new Set() }
+        record.units += Number(item.cantidad) || 0
+        record.days.add(date.toDateString())
+        sales.set(item.productoId, record)
+      }
+    }
+    return new Map(products.map((product) => {
+      const record = sales.get(product.id)
+      const units = record?.units || 0
+      const salesDays = record?.days.size || 0
+      if (!units) return [product.id, { message: 'Sin ventas validadas en los últimos 30 días.', tone: 'bg-slate-50 text-slate-500' }]
+      if (salesDays < 4) return [product.id, { message: `Aún hay pocos datos: ${units} ${product.unidad || 'pzas'} vendidos en ${salesDays} días.`, tone: 'bg-slate-50 text-slate-600' }]
+      const dailyRate = units / 30
+      const daysLeft = dailyRate ? Math.floor((Number(product.stock) || 0) / dailyRate) : null
+      const target = Math.ceil(dailyRate * 14)
+      const restock = Math.max(0, target - (Number(product.stock) || 0))
+      const tone = daysLeft <= 7 ? 'bg-rose-50 text-rose-700' : daysLeft <= 14 ? 'bg-amber-50 text-amber-800' : 'bg-emerald-50 text-emerald-800'
+      const coverage = daysLeft <= 14 ? ` · Reponer ${restock} para cubrir 14 días.` : ''
+      return [product.id, { message: `Pronóstico: ~${daysLeft} días de stock al ritmo de ${dailyRate.toFixed(1)}/día${coverage}`, tone }]
+    }))
+  }, [orders, products])
   const filteredOrders = useMemo(() => {
-    const needle = clean(search)
+    const needle = clean(search).replace(/^#\s*/, '')
     const minDate = new Date()
     if (period === 'today') minDate.setHours(0, 0, 0, 0)
     if (period === 'week') minDate.setDate(minDate.getDate() - 7)
     return orders.filter((order) => {
-      const matchesSearch = !needle || clean(`${order.cliente || ''} ${order.id} ${order.folio || ''}`).includes(needle)
+      const searchText = clean(`${order.cliente || ''} ${order.id} ${order.id.slice(-6)} ${order.id.slice(-3)} ${order.folio || ''} ${order.numeroPedido || ''}`)
+      const matchesSearch = !needle || searchText.includes(needle)
       if (!matchesSearch) return false
+      if (needle) return true
       if (period === 'all') return true
       const date = order.creadoEn?.toDate?.()
       return date && date >= minDate
@@ -250,7 +296,7 @@ export default function Dashboard({ companyName, onOpenChat }) {
   if (!isMember) return <main className="mx-auto max-w-2xl px-5 py-12"><h1 className="text-3xl font-bold">Acceso pendiente</h1><p className="mt-3 text-sm text-slate-600">Agrega un documento con este ID en <code>empresas/{companyId}/miembros</code>:</p><code className="mt-3 block break-all rounded-lg bg-slate-100 p-3 text-xs">{user.uid}</code><button onClick={() => signOut(auth)} className="mt-5 text-sm font-medium text-emerald-800">Cerrar sesión</button></main>
 
   const dateText = new Intl.DateTimeFormat('es-MX', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }).format(now)
-  const searched = (tab === 'history' ? filteredOrders : orders)
+  const searched = filteredOrders
   const columns = workflow.map((status) => ({ status, orders: searched.filter((order) => stateOf(order) === status) }))
 
   return (
@@ -276,17 +322,17 @@ export default function Dashboard({ companyName, onOpenChat }) {
 
       <main className="mx-auto max-w-[1800px] px-5 py-6 lg:px-8 lg:py-8">
         {error && <p role="alert" className="mb-5 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{error}</p>}
-        {tab === 'live' && <div className="grid items-start gap-6 2xl:grid-cols-[minmax(0,1fr)_360px]">
+        {tab === 'live' && <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px] 2xl:grid-cols-[minmax(0,1fr)_360px]">
           <section className="min-w-0">
             <div className="mb-6 flex flex-wrap items-end justify-between gap-4"><div><div className="flex flex-wrap items-center gap-4"><h2 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">Tablero de Pedidos en Vivo</h2><span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700">● En vivo</span></div><p className="mt-2 text-sm text-slate-500">Cada pedido en su lugar. Todo bajo control.</p></div><label className="flex h-11 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-500">◷<select value={period} onChange={(event) => setPeriod(event.target.value)} className="bg-transparent outline-none"><option value="today">Todo el día</option><option value="week">Últimos 7 días</option><option value="all">Todo el historial</option></select></label></div>
             <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-4">{columns.map(({ status, orders: columnOrders }) => <section key={status} className="min-w-0 rounded-2xl border border-slate-200 bg-[#eff4f9] p-2.5 sm:p-3"><header className="flex items-center justify-between px-1 py-2"><h3 className="flex items-center gap-2 text-xs font-semibold text-slate-700 sm:text-sm"><i className={`size-2 rounded-full ${status === workflow[0] ? 'bg-amber-500' : status === workflow[1] ? 'bg-blue-500' : status === workflow[2] ? 'bg-emerald-500' : 'bg-slate-400'}`} />{status}</h3><span className={`grid size-7 place-items-center rounded-lg text-xs font-semibold ${status === workflow[0] ? 'bg-amber-100 text-amber-800' : status === workflow[1] ? 'bg-blue-100 text-blue-800' : status === workflow[2] ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'}`}>{columnOrders.length}</span></header><div className="space-y-2.5">{columnOrders.map((order) => <OrderCard key={order.id} order={order} onStatus={changeStatus} onTicket={setTicket} />)}{columnOrders.length === 0 && <p className="rounded-xl border border-dashed border-slate-300 bg-white/60 px-3 py-6 text-center text-xs text-slate-400">Sin pedidos</p>}</div></section>)}</div>
           </section>
-          <InventoryPanel products={products} canEdit={isOwner} onChange={changeStock} onCreate={() => { setError(''); setCreateOpen(true) }} onEdit={(product) => { setError(''); setEditingProduct(product) }} />
+          <InventoryPanel products={products} canEdit={isOwner} onChange={changeStock} forecastByProduct={forecastByProduct} onCreate={() => { setError(''); setCreateOpen(true) }} onEdit={(product) => { setError(''); setEditingProduct(product) }} />
         </div>}
 
         {tab === 'history' && <section><div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-2xl font-bold text-slate-900">Historial de pedidos</h2><p className="mt-1 text-sm text-slate-500">Todos los pedidos de {companyName}.</p></div><span className="text-sm text-slate-500">{filteredOrders.length} resultados</span></div><div className="mt-5 overflow-hidden rounded-2xl border border-slate-200 bg-white"><div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-5 py-3">Orden</th><th className="px-5 py-3">Cliente</th><th className="px-5 py-3">Productos</th><th className="px-5 py-3">Entrega</th><th className="px-5 py-3">Total</th><th className="px-5 py-3">Estado</th><th className="px-5 py-3" /></tr></thead><tbody className="divide-y divide-slate-100">{filteredOrders.map((order) => <tr key={order.id}><td className="px-5 py-4 font-semibold">#{order.id.slice(-6).toUpperCase()}</td><td className="px-5 py-4">{order.cliente || 'Cliente'}</td><td className="max-w-xs truncate px-5 py-4 text-slate-500">{orderItems(order)}</td><td className="px-5 py-4">{timeOf(order.entrega)}</td><td className="px-5 py-4 font-semibold">{money.format(order.total || 0)}</td><td className="px-5 py-4"><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs">{order.estado}</span></td><td className="px-5 py-4"><button onClick={() => setTicket(order)} className="text-xs font-semibold text-emerald-800">Ver ticket</button></td></tr>)}</tbody></table>{filteredOrders.length === 0 && <p className="p-12 text-center text-sm text-slate-500">No hay pedidos para mostrar.</p>}</div></div></section>}
 
-        {tab === 'inventory' && <section><div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-2xl font-bold text-slate-900">Inventario</h2><p className="mt-1 text-sm text-slate-500">Existencias de {companyName} sincronizadas con el chat.</p></div>{isOwner && <button onClick={() => { setError(''); setCreateOpen(true) }} className="rounded-xl bg-[#087d60] px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-900">＋ Agregar producto</button>}</div><div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{products.map((product) => <div key={product.id} className="rounded-2xl border border-slate-200 bg-white p-5"><StockItem product={product} canEdit={isOwner} onChange={changeStock} onEdit={setEditingProduct} /><p className="mt-2 text-xs text-slate-500">{money.format(Number(product.precio) || 0)} por unidad</p></div>)}</div>{products.length === 0 && <p className="mt-5 rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center text-sm text-slate-500">Agrega productos a la subcolección productos de esta empresa.</p>}</section>}
+        {tab === 'inventory' && <section><div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-2xl font-bold text-slate-900">Inventario</h2><p className="mt-1 text-sm text-slate-500">Existencias y estimación según pedidos validados de los últimos 30 días.</p></div>{isOwner && <button onClick={() => { setError(''); setCreateOpen(true) }} className="rounded-xl bg-[#087d60] px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-900">＋ Agregar producto</button>}</div><div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{products.map((product) => <div key={product.id} className="rounded-2xl border border-slate-200 bg-white p-5"><StockItem product={product} canEdit={isOwner} onChange={changeStock} onEdit={setEditingProduct} forecast={forecastByProduct.get(product.id)} /><p className="mt-2 text-xs text-slate-500">{money.format(Number(product.precio) || 0)} por unidad</p></div>)}</div>{products.length === 0 && <p className="mt-5 rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center text-sm text-slate-500">Agrega productos a la subcolección productos de esta empresa.</p>}</section>}
       </main>
       <footer className="mx-auto flex max-w-[1800px] items-center justify-between px-5 pb-5 text-xs text-slate-500 lg:px-8"><span className="flex items-center gap-2"><i className="size-2 rounded-full bg-emerald-500" />Todos los cambios guardados</span><span className="hidden sm:block">Sincronización en tiempo real · {companyName}</span></footer>
 
@@ -298,7 +344,7 @@ export default function Dashboard({ companyName, onOpenChat }) {
   )
 }
 
-function InventoryPanel({ products, canEdit, onChange, onCreate, onEdit }) {
+function InventoryPanel({ products, canEdit, onChange, onCreate, onEdit, forecastByProduct }) {
   const alerts = products.filter((product) => Number(product.stock) <= 5).length
-  return <aside className="rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_1px_2px_rgba(15,23,42,.03)] sm:p-6"><div className="flex items-start justify-between gap-3"><div><h2 className="text-xl font-bold text-slate-900">Inventario en Vivo</h2><p className="mt-1.5 text-xs text-slate-500">Ajusta existencias sin detener tu operación.</p><button disabled={!canEdit} onClick={onCreate} className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-100 disabled:hidden">＋ Agregar producto</button></div><span className={`shrink-0 rounded-lg px-2.5 py-1.5 text-[11px] font-semibold ${alerts ? 'bg-amber-50 text-amber-800' : 'bg-emerald-50 text-emerald-700'}`}>⚠ {alerts} alertas</span></div><div className="mt-5 border-t border-slate-200 pt-4">{products.slice(0, 8).map((product) => <StockItem key={product.id} product={product} canEdit={canEdit} onChange={onChange} onEdit={onEdit} />)}{products.length === 0 && <p className="py-8 text-center text-xs text-slate-500">Aún no hay productos en el inventario.</p>}</div>{!canEdit && products.length > 0 && <p className="mt-2 text-[10px] text-slate-400">Solicita el rol owner para ajustar existencias.</p>}</aside>
+  return <aside className="rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_1px_2px_rgba(15,23,42,.03)] sm:p-6 xl:sticky xl:top-4 xl:max-h-[calc(100vh-2rem)] xl:overflow-y-auto xl:overscroll-contain"><div className="flex items-start justify-between gap-3"><div><h2 className="text-xl font-bold text-slate-900">Inventario en Vivo</h2><p className="mt-1.5 text-xs text-slate-500">Stock y pronóstico por ventas validadas (30 días).</p><button disabled={!canEdit} onClick={onCreate} className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-100 disabled:hidden">＋ Agregar producto</button></div><span className={`shrink-0 rounded-lg px-2.5 py-1.5 text-[11px] font-semibold ${alerts ? 'bg-amber-50 text-amber-800' : 'bg-emerald-50 text-emerald-700'}`}>⚠ {alerts} alertas</span></div><div className="mt-5 border-t border-slate-200 pt-4">{products.slice(0, 8).map((product) => <StockItem key={product.id} product={product} canEdit={canEdit} onChange={onChange} onEdit={onEdit} forecast={forecastByProduct.get(product.id)} />)}{products.length === 0 && <p className="py-8 text-center text-xs text-slate-500">Aún no hay productos en el inventario.</p>}</div>{!canEdit && products.length > 0 && <p className="mt-2 text-[10px] text-slate-400">Solicita el rol owner para ajustar existencias.</p>}</aside>
 }
