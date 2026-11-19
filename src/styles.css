@@ -14,3 +14,29 @@
 body { margin: 0; min-width: 320px; min-height: 100vh; }
 button { cursor: pointer; }
 .font-display { font-family: "Playfair Display", Georgia, serif; }
+
+/* Dark theme for the authenticated dashboard; semantic status colors stay intact. */
+.dashboard-dark { min-height: 100vh; background: #0f172a !important; color: #e2e8f0 !important; }
+.dashboard-dark footer { background: transparent !important; }
+.dashboard-dark [class*="bg-[#eef3f8]"],
+.dashboard-dark [class*="bg-[#f7f9fc]"],
+.dashboard-dark .bg-slate-50 { background-color: #172235 !important; }
+.dashboard-dark .bg-white,
+.dashboard-dark .bg-white\/60 { background-color: #1e293b !important; }
+.dashboard-dark .bg-slate-100,
+.dashboard-dark .bg-slate-200 { background-color: #334155 !important; }
+.dashboard-dark [class*="border-slate-100"],
+.dashboard-dark [class*="border-slate-200"],
+.dashboard-dark [class*="border-slate-300"] { border-color: #334155 !important; }
+.dashboard-dark [class*="divide-slate-200"] > :not([hidden]) ~ :not([hidden]) { border-color: #334155 !important; }
+.dashboard-dark [class*="text-slate-900"],
+.dashboard-dark [class*="text-slate-800"],
+.dashboard-dark [class*="text-slate-700"] { color: #e2e8f0 !important; }
+.dashboard-dark [class*="text-slate-600"],
+.dashboard-dark [class*="text-slate-500"] { color: #a8b6c9 !important; }
+.dashboard-dark [class*="text-slate-400"] { color: #8291a6 !important; }
+.dashboard-dark input:not([type="range"]),
+.dashboard-dark select { background-color: #172235; color: #e2e8f0; border-color: #475569; }
+.dashboard-dark input::placeholder { color: #94a3b8; }
+.dashboard-dark .hover\:bg-slate-50:hover,
+.dashboard-dark .hover\:bg-slate-100:hover { background-color: #334155 !important; }

@@ -3,9 +3,25 @@ import { collection, doc, getDoc, increment, onSnapshot, orderBy, query, serverT
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth'
 import { auth, db, firebaseConfigured } from './firebase.js'
 
-const companyId = import.meta.env.VITE_COMPANY_ID
 const money = new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN', maximumFractionDigits: 0 })
 const workflow = ['Por validar pago', 'En preparación', 'Listo para entrega', 'Entregado']
+const defaultStoreColor = '#087d60'
+
+function storeThemeVars(color) {
+  return {
+    '--store-color': color,
+    '--color-emerald-50': `color-mix(in srgb, ${color} 6%, white)`,
+    '--color-emerald-100': `color-mix(in srgb, ${color} 12%, white)`,
+    '--color-emerald-200': `color-mix(in srgb, ${color} 22%, white)`,
+    '--color-emerald-300': `color-mix(in srgb, ${color} 38%, white)`,
+    '--color-emerald-400': `color-mix(in srgb, ${color} 65%, white)`,
+    '--color-emerald-500': color,
+    '--color-emerald-600': color,
+    '--color-emerald-700': color,
+    '--color-emerald-800': `color-mix(in srgb, ${color} 86%, black)`,
+    '--color-emerald-900': `color-mix(in srgb, ${color} 72%, black)`,
+  }
+}
 
 function clean(value = '') {
   return value.toLocaleLowerCase('es-MX').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
@@ -85,7 +101,7 @@ function orderFolio(order) {
 }
 
 function CakeMark() {
-  return <span className="grid size-12 shrink-0 place-items-center rounded-2xl bg-[#087d60] text-white sm:size-14"><svg viewBox="0 0 32 32" className="size-7" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 18h22l-2 10H7L5 18Z"/><path d="M4 17c0-1.7 1.3-3 3-3h18c1.7 0 3 1.3 3 3v2H4v-2Z"/><path d="M10 13c-1-3 1-5 3-5 0 2 2 2 3 2 2 0 4 1 4 3"/></svg></span>
+  return <span className="grid size-12 shrink-0 place-items-center rounded-2xl bg-emerald-700 text-white sm:size-14"><svg viewBox="0 0 32 32" className="size-7" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 18h22l-2 10H7L5 18Z"/><path d="M4 17c0-1.7 1.3-3 3-3h18c1.7 0 3 1.3 3 3v2H4v-2Z"/><path d="M10 13c-1-3 1-5 3-5 0 2 2 2 3 2 2 0 4 1 4 3"/></svg></span>
 }
 
 function OrderCard({ order, onStatus, onTicket }) {
@@ -147,7 +163,7 @@ function StockItem({ product, canEdit, onChange, onEdit, forecast }) {
   const alert = stock <= 2 ? { text: 'Stock critico', cls: 'bg-rose-50 text-rose-700', bar: 'bg-rose-500' } : stock <= 5 ? { text: 'Por agotarse', cls: 'bg-amber-50 text-amber-800', bar: 'bg-amber-500' } : { text: 'Disponible', cls: 'bg-emerald-50 text-emerald-700', bar: 'bg-emerald-500' }
   return <div className="border-t border-slate-100 py-4 first:border-0 first:pt-0"><div className="flex items-start justify-between gap-3"><div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold text-slate-700">{product.nombre}</p><p className="mt-2 w-fit rounded-md px-2 py-1 text-[10px] font-medium"><span className={madeToOrder ? 'rounded-md bg-violet-50 px-2 py-1 text-violet-800' : alert.cls + ' rounded-md px-2 py-1'}>{madeToOrder ? 'Se prepara bajo pedido' : alert.text}</span></p>{madeToOrder && <p className="mt-1 text-[10px] text-slate-500">Anticipacion minima: {Number(product.anticipacionDias) || 2} dias</p>}{canEdit && <button onClick={() => onEdit(product)} className="mt-2 text-[10px] font-semibold text-emerald-800 hover:underline">Editar producto</button>}</div>{!madeToOrder && <div className="flex shrink-0 overflow-hidden rounded-lg border border-slate-200"><button disabled={!canEdit || stock <= 0} onClick={() => onChange(product, -1)} aria-label={'Restar stock a ' + product.nombre} className="grid size-9 place-items-center text-lg text-slate-600 hover:bg-slate-50 disabled:opacity-40">-</button><button disabled={!canEdit} onClick={() => onChange(product, 1)} aria-label={'Sumar stock a ' + product.nombre} className="grid size-9 place-items-center border-l border-slate-200 text-lg text-slate-600 hover:bg-slate-50 disabled:opacity-40">+</button></div>}</div>{!madeToOrder && <><div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100"><div className={'h-full rounded-full ' + alert.bar} style={{ width: percentage + '%' }} /></div><p className="mt-1.5 text-[10px] text-slate-500">{stock} {product.unidad || 'pzas'} disponibles</p>{forecast && <p className={'mt-2 rounded-lg px-2.5 py-2 text-[10px] leading-relaxed ' + forecast.tone}>{forecast.message}</p>}</>}</div>
 }
-function Login({ companyName }) {
+function Login({ companyName, storeColor }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loginError, setLoginError] = useState('')
@@ -157,7 +173,7 @@ function Login({ companyName }) {
     try { await signInWithEmailAndPassword(auth, email, password) }
     catch { setLoginError('No se pudo iniciar sesión. Revisa tu correo y contraseña.') }
   }
-  return <main className="mx-auto w-full max-w-md px-5 py-12 sm:py-20"><p className="text-sm font-medium text-emerald-800">Panel de {companyName}</p><h1 className="mt-2 text-3xl font-bold text-slate-900">Inicia sesión</h1><p className="mt-2 text-sm text-slate-500">Acceso exclusivo al equipo del negocio.</p><form onSubmit={login} className="mt-7 space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><label className="block text-sm font-medium text-slate-700">Correo<input type="email" required value={email} onChange={(event) => setEmail(event.target.value)} className="mt-1.5 block w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-emerald-600" /></label><label className="block text-sm font-medium text-slate-700">Contraseña<input type="password" required value={password} onChange={(event) => setPassword(event.target.value)} className="mt-1.5 block w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-emerald-600" /></label>{loginError && <p role="alert" className="text-sm text-rose-700">{loginError}</p>}<button className="w-full rounded-lg bg-[#087d60] px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-900">Entrar al dashboard</button></form></main>
+  return <main style={storeThemeVars(storeColor)} className="mx-auto w-full max-w-md px-5 py-12 sm:py-20"><p className="text-sm font-medium text-emerald-800">Panel de {companyName}</p><h1 className="mt-2 text-3xl font-bold text-slate-900">Inicia sesión</h1><p className="mt-2 text-sm text-slate-500">Acceso exclusivo al equipo del negocio.</p><form onSubmit={login} className="mt-7 space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><label className="block text-sm font-medium text-slate-700">Correo<input type="email" required value={email} onChange={(event) => setEmail(event.target.value)} className="mt-1.5 block w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-emerald-600" /></label><label className="block text-sm font-medium text-slate-700">Contraseña<input type="password" required value={password} onChange={(event) => setPassword(event.target.value)} className="mt-1.5 block w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-emerald-600" /></label>{loginError && <p role="alert" className="text-sm text-rose-700">{loginError}</p>}<button className="w-full rounded-lg bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-900">Entrar al dashboard</button></form></main>
 }
 
 function ProductDialog({ product, onClose, onSave, saving, error }) {
@@ -180,9 +196,9 @@ function ProductDialog({ product, onClose, onSave, saving, error }) {
     if (!editing) Object.assign(values, { stock: mode === 'bajoPedido' ? 0 : Number(stock), stockMaximo: Math.max(Number(stock) || 1, 1), unidad: unit, activo: true, creadoEn: serverTimestamp() })
     await onSave(values)
   }
-  return <div role="presentation" onClick={onClose} className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4"><section role="dialog" aria-modal="true" aria-label={editing ? 'Editar producto' : 'Agregar producto'} onClick={(event) => event.stopPropagation()} className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl"><div className="flex items-start justify-between"><div><h2 className="text-xl font-bold text-slate-900">{editing ? 'Editar producto' : 'Nuevo producto'}</h2><p className="mt-1 text-sm text-slate-500">Configura el catalogo y su forma de venta.</p></div><button type="button" onClick={onClose} className="grid size-8 place-items-center rounded-full bg-slate-100 text-slate-600">?</button></div><form onSubmit={submit} className="mt-5 space-y-4"><label className="block text-sm font-medium text-slate-700">Nombre<input required maxLength={80} value={name} onChange={(event) => setName(event.target.value)} placeholder="Pastel personalizado" className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm" /></label><label className="block text-sm font-medium text-slate-700">Precio base (MXN)<input required type="number" min="0.01" step="0.01" value={price} onChange={(event) => setPrice(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm" /></label><label className="block text-sm font-medium text-slate-700">Modalidad<select value={mode} onChange={(event) => setMode(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm"><option value="inventario">Producto con stock disponible</option><option value="bajoPedido">Preparar bajo pedido</option></select></label>{mode === 'bajoPedido' ? <label className="block text-sm font-medium text-slate-700">Anticipacion minima (dias)<input required type="number" min="1" max="60" value={leadDays} onChange={(event) => setLeadDays(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm" /><span className="mt-1 block text-xs font-normal text-slate-500">Los clientes podran elegir entrega a partir de ese plazo.</span></label> : <>{!editing && <label className="block text-sm font-medium text-slate-700">Existencias<input required type="number" min="0" step="1" value={stock} onChange={(event) => setStock(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm" /></label>}<label className="block text-sm font-medium text-slate-700">Unidad<select value={unit} onChange={(event) => setUnit(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm"><option value="pzas">Piezas</option><option value="docenas">Docenas</option><option value="kg">Kilogramos</option><option value="litros">Litros</option></select></label></>}{(formError || error) && <p role="alert" className="text-sm text-rose-700">{formError || error}</p>}<button disabled={saving} className="w-full rounded-xl bg-[#087d60] px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{saving ? 'Guardando...' : editing ? 'Guardar cambios' : 'Guardar producto'}</button></form></section></div>
+  return <div role="presentation" onClick={onClose} className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4"><section role="dialog" aria-modal="true" aria-label={editing ? 'Editar producto' : 'Agregar producto'} onClick={(event) => event.stopPropagation()} className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl"><div className="flex items-start justify-between"><div><h2 className="text-xl font-bold text-slate-900">{editing ? 'Editar producto' : 'Nuevo producto'}</h2><p className="mt-1 text-sm text-slate-500">Configura el catalogo y su forma de venta.</p></div><button type="button" onClick={onClose} className="grid size-8 place-items-center rounded-full bg-slate-100 text-slate-600">?</button></div><form onSubmit={submit} className="mt-5 space-y-4"><label className="block text-sm font-medium text-slate-700">Nombre<input required maxLength={80} value={name} onChange={(event) => setName(event.target.value)} placeholder="Pastel personalizado" className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm" /></label><label className="block text-sm font-medium text-slate-700">Precio base (MXN)<input required type="number" min="0.01" step="0.01" value={price} onChange={(event) => setPrice(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm" /></label><label className="block text-sm font-medium text-slate-700">Modalidad<select value={mode} onChange={(event) => setMode(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm"><option value="inventario">Producto con stock disponible</option><option value="bajoPedido">Preparar bajo pedido</option></select></label>{mode === 'bajoPedido' ? <label className="block text-sm font-medium text-slate-700">Anticipacion minima (dias)<input required type="number" min="1" max="60" value={leadDays} onChange={(event) => setLeadDays(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm" /><span className="mt-1 block text-xs font-normal text-slate-500">Los clientes podran elegir entrega a partir de ese plazo.</span></label> : <>{!editing && <label className="block text-sm font-medium text-slate-700">Existencias<input required type="number" min="0" step="1" value={stock} onChange={(event) => setStock(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm" /></label>}<label className="block text-sm font-medium text-slate-700">Unidad<select value={unit} onChange={(event) => setUnit(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm"><option value="pzas">Piezas</option><option value="docenas">Docenas</option><option value="kg">Kilogramos</option><option value="litros">Litros</option></select></label></>}{(formError || error) && <p role="alert" className="text-sm text-rose-700">{formError || error}</p>}<button disabled={saving} className="w-full rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{saving ? 'Guardando...' : editing ? 'Guardar cambios' : 'Guardar producto'}</button></form></section></div>
 }
-export default function Dashboard({ companyName, activeTab, onTabChange, onOpenChat }) {
+export default function Dashboard({ companyId, companyName, activeTab, onTabChange, onOpenChat, onChooseStore }) {
   const [orders, setOrders] = useState([])
   const [products, setProducts] = useState([])
   const stockValues = useRef(new Map())
@@ -193,6 +209,7 @@ export default function Dashboard({ companyName, activeTab, onTabChange, onOpenC
   const [accessLoading, setAccessLoading] = useState(false)
   const [error, setError] = useState('')
   const [search, setSearch] = useState('')
+  const [darkMode, setDarkMode] = useState(() => window.localStorage.getItem('dashboard-theme') === 'dark')
   const [period, setPeriod] = useState('today')
   const [targetDays, setTargetDays] = useState(14)
   const [ticket, setTicket] = useState(null)
@@ -200,6 +217,7 @@ export default function Dashboard({ companyName, activeTab, onTabChange, onOpenC
   const [editingProduct, setEditingProduct] = useState(null)
   const [creating, setCreating] = useState(false)
   const [toast, setToast] = useState('')
+  const [storeColor, setStoreColor] = useState(defaultStoreColor)
 
   useEffect(() => {
     if (!auth) { setAuthReady(true); return }
@@ -207,7 +225,11 @@ export default function Dashboard({ companyName, activeTab, onTabChange, onOpenC
   }, [])
 
   useEffect(() => {
-    if (!db || !user || !companyId) { setIsMember(false); setIsOwner(false); return }
+    setIsMember(false)
+    setIsOwner(false)
+    setOrders([])
+    setProducts([])
+    if (!db || !user || !companyId) { setAccessLoading(false); return }
     let active = true
     setAccessLoading(true)
     getDoc(doc(db, 'empresas', companyId, 'miembros', user.uid)).then((member) => {
@@ -219,7 +241,7 @@ export default function Dashboard({ companyName, activeTab, onTabChange, onOpenC
       if (active) { setError('No se pudo verificar tu acceso en Firestore.'); setAccessLoading(false) }
     })
     return () => { active = false }
-  }, [user])
+  }, [user, companyId])
 
   useEffect(() => {
     if (!db || !isMember || !companyId) return
@@ -234,7 +256,16 @@ export default function Dashboard({ companyName, activeTab, onTabChange, onOpenC
       setProducts(nextProducts)
     }, (firestoreError) => setError(`No se pudo cargar el inventario (${firestoreError.code || 'error'}). Revisa la regla de lectura de productos.`))
     return () => { stopOrders(); stopProducts() }
-  }, [isMember])
+  }, [isMember, companyId])
+
+  useEffect(() => {
+    if (!db || !companyId) return
+    return onSnapshot(doc(db, 'empresas', companyId), (snapshot) => {
+      const configuredColor = snapshot.data()?.colorPrimario
+      const color = /^#[0-9a-f]{6}$/i.test(configuredColor || '') ? configuredColor : defaultStoreColor
+      setStoreColor(color)
+    })
+  }, [companyId])
 
   const now = new Date()
   const todayOrders = orders.filter((order) => {
@@ -357,7 +388,7 @@ export default function Dashboard({ companyName, activeTab, onTabChange, onOpenC
 
   if (!firebaseConfigured || !companyId) return <main className="mx-auto max-w-2xl px-5 py-12"><h1 className="text-3xl font-bold">Configura Firebase</h1><p className="mt-3 text-sm text-slate-600">Completa Firebase y VITE_COMPANY_ID en .env.local.</p></main>
   if (!authReady) return <main className="px-6 py-16 text-sm text-slate-500">Verificando sesión…</main>
-  if (!user) return <Login companyName={companyName} />
+  if (!user) return <Login companyName={companyName} storeColor={storeColor} />
   if (accessLoading) return <main className="px-6 py-16 text-sm text-slate-500">Verificando acceso al negocio…</main>
   if (!isMember) return <main className="mx-auto max-w-2xl px-5 py-12"><h1 className="text-3xl font-bold">Acceso pendiente</h1><p className="mt-3 text-sm text-slate-600">Agrega un documento con este ID en <code>empresas/{companyId}/miembros</code>:</p><code className="mt-3 block break-all rounded-lg bg-slate-100 p-3 text-xs">{user.uid}</code><button onClick={() => signOut(auth)} className="mt-5 text-sm font-medium text-emerald-800">Cerrar sesión</button></main>
 
@@ -366,7 +397,7 @@ export default function Dashboard({ companyName, activeTab, onTabChange, onOpenC
   const columns = workflow.map((status) => ({ status, orders: searched.filter((order) => stateOf(order) === status) }))
 
   return (
-    <div className="min-h-[calc(100vh-76px)] bg-[#f7f9fc] text-slate-800">
+    <div style={storeThemeVars(storeColor)} className={`min-h-[calc(100vh-76px)] bg-[#f7f9fc] text-slate-800 ${darkMode ? 'dashboard-dark' : ''}`}>
       <header className="border-b border-slate-200 bg-white px-5 py-4 lg:px-8">
         <div className="mx-auto grid w-full max-w-[1800px] items-center gap-x-6 gap-y-4 lg:grid-cols-2 xl:grid-cols-[minmax(330px,1fr)_minmax(480px,1.45fr)_minmax(270px,.9fr)]">
           <div className="flex min-w-0 items-center gap-3"><CakeMark /><div className="min-w-0"><h1 className="text-lg font-bold leading-tight tracking-tight text-slate-900 2xl:text-xl">{companyName}</h1><span className="mt-2 inline-flex items-center gap-2 rounded-md bg-emerald-50 px-2.5 py-1 text-[11px] font-medium text-emerald-800"><i className="size-2 rounded-full bg-emerald-500" />Bot de WhatsApp Activo</span></div></div>
@@ -375,16 +406,17 @@ export default function Dashboard({ companyName, activeTab, onTabChange, onOpenC
             <div className="min-w-0 px-3"><p className="text-[11px] text-slate-500">Ingresos validados</p><p className="mt-1 whitespace-nowrap text-xl font-bold leading-tight text-emerald-700 2xl:text-2xl">{money.format(validatedRevenue)} MXN</p></div>
             <div className="min-w-0 px-3"><p className="text-[11px] text-slate-500">Insumos bajos</p><p className="mt-1 text-2xl font-bold text-amber-700">{lowStock.length}</p></div>
           </div>
-          <label className="relative min-w-0 lg:col-span-2 xl:col-span-1"><span className="sr-only">Buscar pedidos</span><svg viewBox="0 0 24 24" className="absolute left-4 top-1/2 size-4 -translate-y-1/2 text-slate-500" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 5 5"/></svg><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar cliente o n.º de orden" className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 pl-11 pr-4 text-xs outline-none placeholder:text-slate-500 focus:border-emerald-600" /></label>
+          <div className="flex min-w-0 items-center gap-2 lg:col-span-2 xl:col-span-1"><label className="relative min-w-0 flex-1"><span className="sr-only">Buscar pedidos</span><svg viewBox="0 0 24 24" className="absolute left-4 top-1/2 size-4 -translate-y-1/2 text-slate-500" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 5 5"/></svg><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar cliente o n.º de orden" className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 pl-11 pr-4 text-xs outline-none placeholder:text-slate-500 focus:border-emerald-600" /></label><button type="button" aria-label={darkMode ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'} aria-pressed={darkMode} title={darkMode ? 'Modo claro' : 'Modo oscuro'} onClick={() => setDarkMode((current) => { const next = !current; window.localStorage.setItem('dashboard-theme', next ? 'dark' : 'light'); return next })} className="grid size-11 shrink-0 place-items-center rounded-xl border border-slate-200 bg-slate-50 text-slate-700 transition hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-600">{darkMode ? <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"/></svg> : <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M20.9 13A9 9 0 0 1 11 3.1 9 9 0 1 0 20.9 13Z"/></svg>}</button></div>
         </div>
       </header>
 
-      <nav className="border-b border-slate-200 bg-white px-5 lg:px-8"><div className="mx-auto flex max-w-[1800px] items-center gap-7 overflow-x-auto">
-        {[['live', '▦', 'Operación en vivo'], ['history', '◷', 'Historial de pedidos'], ['inventory', '▤', 'Inventario']].map(([key, icon, label]) => <button key={key} onClick={() => onTabChange(key)} className={`relative flex h-12 shrink-0 items-center gap-2.5 text-xs font-semibold ${activeTab === key ? 'text-emerald-700' : 'text-slate-500 hover:text-slate-800'}`}><span className="text-base">{icon}</span>{label}{activeTab === key && <i className="absolute inset-x-0 bottom-0 h-[3px] rounded-t bg-emerald-700" />}</button>)}
-        <button onClick={() => onTabChange('live')} className="hidden h-12 shrink-0 items-center gap-2 text-xs font-medium text-slate-500 hover:text-slate-800 lg:flex"><span>⌁</span>Pronóstico</button>
-        <span className="ml-auto hidden shrink-0 items-center gap-2 py-3 text-xs text-slate-500 md:flex">◷ <span className="capitalize">{dateText}</span></span>
-        <button onClick={onOpenChat} className="shrink-0 py-3 text-[11px] font-medium text-emerald-700 hover:text-emerald-900">Abrir chat</button>
-        <button onClick={() => signOut(auth)} className="shrink-0 py-3 text-[11px] font-medium text-slate-500 hover:text-slate-900">Cerrar sesión</button>
+      <nav className="border-b border-white/20 px-5 lg:px-8" style={{ backgroundColor: storeColor }}><div className="mx-auto flex max-w-[1800px] items-center gap-7 overflow-x-auto">
+        {[['live', '▦', 'Operación en vivo'], ['history', '◷', 'Historial de pedidos'], ['inventory', '▤', 'Inventario']].map(([key, icon, label]) => <button key={key} onClick={() => onTabChange(key)} className={`relative flex h-12 shrink-0 items-center gap-2.5 text-xs font-semibold ${activeTab === key ? 'text-white' : 'text-white/75 hover:text-white'}`}><span className="text-base">{icon}</span>{label}{activeTab === key && <i className="absolute inset-x-0 bottom-0 h-[3px] rounded-t bg-white" />}</button>)}
+        <button onClick={() => onTabChange('forecast')} className={`relative hidden h-12 shrink-0 items-center gap-2 text-xs font-medium lg:flex ${activeTab === 'forecast' ? 'text-white' : 'text-white/75 hover:text-white'}`}><span>⌁</span>Pronóstico{activeTab === 'forecast' && <i className="absolute inset-x-0 bottom-0 h-[3px] rounded-t bg-white" />}</button>
+        <span className="ml-auto hidden shrink-0 items-center gap-2 py-3 text-xs text-white/80 md:flex">◷ <span className="capitalize">{dateText}</span></span>
+        <button onClick={onOpenChat} className="shrink-0 py-3 text-[11px] font-medium text-white hover:text-white/80">Abrir chat</button>
+        <button onClick={onChooseStore} className="shrink-0 rounded-lg border border-white/35 px-3 py-2 text-[11px] font-medium text-white transition hover:bg-white/10">Cambiar tienda</button>
+        <button onClick={() => signOut(auth)} className="shrink-0 rounded-lg bg-rose-600 px-3 py-2 text-[11px] font-semibold text-white shadow-sm transition hover:bg-rose-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white">Cerrar sesión</button>
       </div></nav>
 
       <main className="mx-auto max-w-[1800px] px-5 py-5 lg:px-8 lg:py-6">
@@ -400,14 +432,14 @@ export default function Dashboard({ companyName, activeTab, onTabChange, onOpenC
 
         {activeTab === 'history' && <section><div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-2xl font-bold text-slate-900">Historial de pedidos</h2><p className="mt-1 text-sm text-slate-500">Todos los pedidos de {companyName}.</p></div><span className="text-sm text-slate-500">{filteredOrders.length} resultados</span></div><div className="mt-5 overflow-hidden rounded-2xl border border-slate-200 bg-white"><div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-5 py-3">Orden</th><th className="px-5 py-3">Cliente</th><th className="px-5 py-3">Productos</th><th className="px-5 py-3">Entrega</th><th className="px-5 py-3">Total</th><th className="px-5 py-3">Estado</th><th className="px-5 py-3" /></tr></thead><tbody className="divide-y divide-slate-100">{filteredOrders.map((order) => <tr key={order.id}><td className="px-5 py-4 font-semibold">#{order.id.slice(-6).toUpperCase()}</td><td className="px-5 py-4">{order.cliente || 'Cliente'}</td><td className="max-w-xs truncate px-5 py-4 text-slate-500">{orderItems(order)}</td><td className="px-5 py-4">{timeOf(order.entrega)}</td><td className="px-5 py-4 font-semibold">{orderTotalText(order)}</td><td className="px-5 py-4"><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs">{order.estado}</span></td><td className="px-5 py-4"><button onClick={() => setTicket(order)} className="text-xs font-semibold text-emerald-800">Ver ticket</button></td></tr>)}</tbody></table>{filteredOrders.length === 0 && <p className="p-12 text-center text-sm text-slate-500">No hay pedidos para mostrar.</p>}</div></div></section>}
 
-        {activeTab === 'inventory' && <section><div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-2xl font-bold text-slate-900">Inventario</h2><p className="mt-1 text-sm text-slate-500">Existencias y estimación según pedidos validados de los últimos 30 días.</p></div>{isOwner && <button onClick={() => { setError(''); setCreateOpen(true) }} className="rounded-xl bg-[#087d60] px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-900">＋ Agregar producto</button>}</div><div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{products.map((product) => <div key={product.id} className="rounded-2xl border border-slate-200 bg-white p-5"><StockItem product={product} canEdit={isOwner} onChange={changeStock} onEdit={setEditingProduct} forecast={forecastByProduct.get(product.id)} /><p className="mt-2 text-xs text-slate-500">{money.format(Number(product.precio) || 0)} por unidad</p></div>)}</div>{products.length === 0 && <p className="mt-5 rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center text-sm text-slate-500">Agrega productos a la subcolección productos de esta empresa.</p>}</section>}
+        {activeTab === 'inventory' && <section><div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-2xl font-bold text-slate-900">Inventario</h2><p className="mt-1 text-sm text-slate-500">Existencias y estimación según pedidos validados de los últimos 30 días.</p></div>{isOwner && <button onClick={() => { setError(''); setCreateOpen(true) }} className="rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-900">＋ Agregar producto</button>}</div><div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{products.map((product) => <div key={product.id} className="rounded-2xl border border-slate-200 bg-white p-5"><StockItem product={product} canEdit={isOwner} onChange={changeStock} onEdit={setEditingProduct} forecast={forecastByProduct.get(product.id)} /><p className="mt-2 text-xs text-slate-500">{money.format(Number(product.precio) || 0)} por unidad</p></div>)}</div>{products.length === 0 && <p className="mt-5 rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center text-sm text-slate-500">Agrega productos a la subcolección productos de esta empresa.</p>}</section>}
 
         {activeTab === 'forecast' && <ForecastView products={forecastProducts} forecastByProduct={forecastByProduct} targetDays={targetDays} onTargetDaysChange={setTargetDays} />}
       </main>
       <footer className="mx-auto flex max-w-[1800px] items-center justify-between px-5 pb-5 text-xs text-slate-500 lg:px-8"><span className="flex items-center gap-2"><i className="size-2 rounded-full bg-emerald-500" />Todos los cambios guardados</span><span className="hidden sm:block">Sincronización en tiempo real · {companyName}</span></footer>
 
       {toast && <div className="fixed bottom-6 left-1/2 z-40 -translate-x-1/2 rounded-full bg-slate-900 px-4 py-2.5 text-xs font-medium text-white shadow-lg">{toast}</div>}
-      {activeTab === 'live' && <button onClick={() => setCreateOpen(true)} className="fixed bottom-6 right-6 z-30 rounded-full bg-[#087d60] px-4 py-3 text-sm font-semibold text-white shadow-lg hover:bg-emerald-900 2xl:hidden">＋ Producto</button>}
+      {activeTab === 'live' && <button onClick={() => setCreateOpen(true)} className="fixed bottom-6 right-6 z-30 rounded-full bg-emerald-700 px-4 py-3 text-sm font-semibold text-white shadow-lg hover:bg-emerald-900 2xl:hidden">＋ Producto</button>}
       {(createOpen || editingProduct) && isOwner && <ProductDialog product={editingProduct} onClose={() => { setCreateOpen(false); setEditingProduct(null); setError('') }} onSave={saveProduct} saving={creating} error={error} />}
       {ticket && <div role="presentation" onClick={() => setTicket(null)} className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4"><section role="dialog" aria-modal="true" aria-label="Detalle del pedido" onClick={(event) => event.stopPropagation()} className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl"><div className="flex items-start justify-between"><div><p className="text-xs font-medium text-emerald-700">{companyName}</p><h2 className="mt-1 text-xl font-bold">Pedido #{ticket.id.slice(-6).toUpperCase()}</h2></div><button onClick={() => setTicket(null)} className="grid size-8 place-items-center rounded-full bg-slate-100 text-slate-600">×</button></div><div className="mt-5 space-y-3 text-sm"><p><span className="text-slate-500">Cliente:</span> {ticket.cliente || 'Pedido por chat'}</p><p><span className="text-slate-500">Entrega:</span> {timeOf(ticket.entrega)}</p><div className="border-y border-dashed border-slate-200 py-3"><p className="mb-2 text-slate-500">Productos</p><p>{orderItems(ticket)}</p></div><p className="flex justify-between text-base font-bold"><span>{clean(ticket.estado || '').includes('cotiz') ? 'Precio' : 'Total'}</span><span>{orderTotalText(ticket)}</span></p><p className="text-slate-500">Estado: {ticket.estado || 'Pendiente de pago'}</p></div><button onClick={() => setTicket(null)} className="mt-5 w-full rounded-xl bg-emerald-800 px-4 py-2.5 text-sm font-semibold text-white">Cerrar</button></section></div>}
     </div>

@@ -3,7 +3,6 @@ import { collection, doc, onSnapshot, query, runTransaction, serverTimestamp, se
 import { db, firebaseConfigured } from './firebase.js'
 
 const currency = new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN', maximumFractionDigits: 0 })
-const companyId = import.meta.env.VITE_COMPANY_ID
 const cakeBasePrices = { 'Chico (6 porciones)': 450, 'Mediano (12 porciones)': 700, 'Grande (20 porciones)': 950, 'Extra grande (30 porciones)': 1300 }
 const cakeFlavorExtras = { 'Red velvet': 50, 'Especial': 100 }
 const cakeFillingExtras = { 'Sin relleno': 0, 'Fruta o mermelada': 50, 'Cajeta o dulce de leche': 50, 'Ganache de chocolate': 80, 'Queso crema': 80 }
@@ -17,13 +16,14 @@ const localDateValue = (date = new Date()) => {
 
 function ProductArt({ kind }) {
   return <div className={`grid h-24 place-items-center overflow-hidden rounded-t-xl ${kind === 'cookies' ? 'bg-[#f2dfbf]' : 'bg-[#f0ddc7]'}`}>
-    <span className="text-[52px] drop-shadow-sm" aria-hidden="true">{kind === 'cookies' ? '🍪' : '🍰'}</span>
+    <span className="text-[52px] drop-shadow-sm" aria-hidden="true">{kind === 'cookies' ? '🍪' : kind === 'pizza' ? '🍕' : '🍰'}</span>
   </div>
 }
 
-export default function Chat({ onOpenDashboard }) {
+export default function Chat({ companyId, stores = [], onSelectStore, onOpenDashboard }) {
   const [products, setProducts] = useState([])
   const [companyName, setCompanyName] = useState('Pastelería')
+  const [businessType, setBusinessType] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [cart, setCart] = useState({})
@@ -39,8 +39,12 @@ export default function Chat({ onOpenDashboard }) {
 
   useEffect(() => {
     if (!db || !companyId) { setLoading(false); return }
+    setLoading(true)
     const stopCompany = onSnapshot(doc(db, 'empresas', companyId), (snapshot) => {
-      if (snapshot.exists()) setCompanyName(snapshot.data().nombre || 'Pastelería')
+      if (snapshot.exists()) {
+        setCompanyName(snapshot.data().nombre || 'Tienda')
+        setBusinessType(snapshot.data().tipoNegocio || '')
+      }
     })
     const productsQuery = query(collection(db, 'empresas', companyId, 'productos'), where('activo', '==', true))
     const stopProducts = onSnapshot(productsQuery, (snapshot) => {
@@ -55,9 +59,21 @@ export default function Chat({ onOpenDashboard }) {
       setLoading(false)
     })
     return () => { stopCompany(); stopProducts() }
-  }, [])
+  }, [companyId])
+
+  useEffect(() => {
+    setProducts([])
+    setCart({})
+    setCustomizations({})
+    setOrderMode('choose')
+    setCustomerName('')
+    setSuccess('')
+    setError('')
+    setStoreMenuOpen(false)
+  }, [companyId])
 
   const chosen = useMemo(() => products.filter((item) => cart[item.id] > 0), [products, cart])
+  const isPizzeria = /pizzer|pizza/i.test(`${businessType} ${companyName} ${companyId || ''}`)
   const isCustomOrder = orderMode === 'custom'
   const total = chosen.reduce((sum, item) => sum + (Number(item.price) || 0) * cart[item.id], 0)
   const canOrder = chosen.length > 0 && chosen.every((item) => item.modoVenta === 'bajoPedido' || cart[item.id] <= (Number(item.stock) || 0))
@@ -186,24 +202,24 @@ export default function Chat({ onOpenDashboard }) {
   return (
     <section className="flex h-full min-h-0 flex-col bg-[#efeae2]">
       <div className="relative z-20 flex h-[68px] shrink-0 items-center gap-3 bg-[#075e54] px-4 text-white">
-        <div className="grid size-10 place-items-center rounded-full bg-[#e8bd82] text-xl">🧁</div>
-        <div className="relative min-w-0 flex-1"><button aria-expanded={storeMenuOpen} onClick={() => setStoreMenuOpen((open) => !open)} className="flex max-w-full items-center gap-1 text-left"><p className="truncate text-sm font-semibold">{companyName}</p><svg viewBox="0 0 20 20" className="size-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="m5 7.5 5 5 5-5" /></svg></button><p className="mt-0.5 text-[11px] text-emerald-100">En línea · Asistente de pedidos</p>{storeMenuOpen && <div className="absolute left-0 top-12 z-50 w-60 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 text-slate-800 shadow-xl"><div className="px-3 py-2 text-[9px] font-semibold uppercase tracking-wide text-slate-400">Tienda actual</div><div className="px-3 pb-2 text-xs font-semibold text-emerald-800">{companyName} <span aria-hidden="true">✓</span></div><button disabled className="w-full cursor-not-allowed px-3 py-2 text-left text-xs text-slate-400">Otra tienda · Próximamente</button><div className="my-1 border-t border-slate-100" /><button onClick={() => { setStoreMenuOpen(false); onOpenDashboard?.() }} className="w-full px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-50">Panel del negocio</button></div>}</div>
+        <div className="grid size-10 place-items-center rounded-full bg-[#e8bd82] text-xl">{isPizzeria ? '🍕' : '🧁'}</div>
+        <div className="relative min-w-0 flex-1"><button aria-expanded={storeMenuOpen} onClick={() => setStoreMenuOpen((open) => !open)} className="flex max-w-full items-center gap-1 text-left"><p className="truncate text-sm font-semibold">{companyName}</p><svg viewBox="0 0 20 20" className="size-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="m5 7.5 5 5 5-5" /></svg></button><p className="mt-0.5 text-[11px] text-emerald-100">En línea · Asistente de pedidos</p>{storeMenuOpen && <div className="absolute left-0 top-12 z-50 w-60 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 text-slate-800 shadow-xl"><div className="px-3 py-2 text-[9px] font-semibold uppercase tracking-wide text-slate-400">Cambiar tienda</div>{stores.map((store) => <button key={store.id} onClick={() => { setStoreMenuOpen(false); if (store.id !== companyId) onSelectStore?.(store.id) }} className={`w-full px-3 py-2 text-left text-xs hover:bg-slate-50 ${store.id === companyId ? 'font-semibold text-emerald-800' : 'text-slate-700'}`}>{store.nombre || store.id}{store.id === companyId && <span className="float-right" aria-label="Tienda actual">✓</span>}</button>)}<div className="my-1 border-t border-slate-100" /><button onClick={() => { setStoreMenuOpen(false); onOpenDashboard?.() }} className="w-full px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-50">Panel general de tiendas</button></div>}</div>
         <span className="size-2 rounded-full bg-emerald-300" aria-label="En línea" />
       </div>
 
       <div className="flex-1 space-y-4 overflow-y-auto px-3 py-4 sm:px-4">
         <p className="mx-auto w-fit rounded-full bg-white/80 px-3 py-1 text-[10px] font-medium text-stone-500">HOY</p>
         <div className="max-w-[94%] rounded-2xl rounded-tl-sm bg-white p-3 shadow-sm">
-          <p className="text-xs leading-relaxed text-stone-700">¡Hola! Bienvenido a <strong>Repostería La Esquina.</strong> Elige lo que deseas ordenar hoy:</p>
+          <p className="text-xs leading-relaxed text-stone-700">¡Hola! Bienvenido a <strong>{companyName}.</strong> {isPizzeria ? 'Elige del menú lo que deseas ordenar:' : 'Elige lo que deseas ordenar hoy:'}</p>
           {(!firebaseConfigured || !companyId) && <p className="mt-3 rounded-lg bg-amber-50 p-2.5 text-[11px] text-amber-900">Configura Firebase y el ID de empresa en <code>.env.local</code> para cargar el catálogo.</p>}
           {error && <p role="alert" className="mt-3 rounded-lg bg-rose-50 p-2.5 text-[11px] text-rose-800">{error}</p>}
           {loading && <p className="mt-3 text-[11px] text-stone-400">Consultando productos…</p>}
           {orderMode === 'catalog' && !loading && firebaseConfigured && !error && products.length === 0 && <p className="mt-3 rounded-lg bg-stone-50 p-3 text-[11px] leading-relaxed text-stone-500">Aún no hay productos activos en Firestore. Agrega documentos en la colección <code>products</code> para mostrarlos aquí.</p>}
-          {orderMode === 'choose' && <div className="mt-3 grid gap-2"><p className="text-[11px] font-medium text-stone-600">Que te gustaria hacer?</p><button onClick={() => setOrderMode('catalog')} className="flex items-center justify-between rounded-xl border border-stone-200 bg-stone-50 p-3 text-left hover:border-emerald-300"><span><strong className="block text-[11px] text-stone-800">Elegir del catalogo</strong><small className="mt-0.5 block text-[9px] text-stone-500">Productos y precios disponibles</small></span><span className="text-emerald-700">›</span></button><button onClick={() => setOrderMode('custom')} className="flex items-center justify-between rounded-xl border border-amber-200 bg-amber-50/70 p-3 text-left hover:border-amber-400"><span><strong className="block text-[11px] text-stone-800">Encargar un pastel personalizado</strong><small className="mt-0.5 block text-[9px] text-stone-500">Para cumpleanos, aniversarios y mas</small></span><span className="text-amber-800">›</span></button></div>}
+          {orderMode === 'choose' && <div className="mt-3 grid gap-2"><p className="text-[11px] font-medium text-stone-600">{isPizzeria ? '¿Qué te gustaría pedir?' : '¿Qué te gustaría hacer?'}</p><button onClick={() => setOrderMode('catalog')} className="flex items-center justify-between rounded-xl border border-stone-200 bg-stone-50 p-3 text-left hover:border-emerald-300"><span><strong className="block text-[11px] text-stone-800">{isPizzeria ? 'Ver menú' : 'Elegir del catálogo'}</strong><small className="mt-0.5 block text-[9px] text-stone-500">Productos y precios disponibles</small></span><span className="text-emerald-700">›</span></button>{!isPizzeria && <button onClick={() => setOrderMode('custom')} className="flex items-center justify-between rounded-xl border border-amber-200 bg-amber-50/70 p-3 text-left hover:border-amber-400"><span><strong className="block text-[11px] text-stone-800">Encargar un pastel personalizado</strong><small className="mt-0.5 block text-[9px] text-stone-500">Para cumpleaños, aniversarios y más</small></span><span className="text-amber-800">›</span></button>}</div>}
           {orderMode === 'catalog' && <div><button onClick={() => { setOrderMode('choose'); setCart({}) }} className="mt-3 text-[10px] font-semibold text-emerald-800">← Volver a opciones</button>{products.length === 0 && !loading && <p className="mt-2 rounded-lg bg-stone-50 p-3 text-[11px] text-stone-500">No hay productos activos en el catalogo todavia.</p>}</div>}
           {orderMode === 'catalog' && products.length > 0 && <div className="mt-2 grid grid-cols-2 gap-2">
             {products.map((item) => {
-              const kind = /galleta|cookie/i.test(item.name || '') ? 'cookies' : 'cake'
+              const kind = isPizzeria ? 'pizza' : /galleta|cookie/i.test(item.name || '') ? 'cookies' : 'cake'
               const stock = Number(item.stock) || 0
               const madeToOrder = item.modoVenta === 'bajoPedido'
               return <article key={item.id} className="overflow-hidden rounded-xl border border-stone-100 bg-white">
