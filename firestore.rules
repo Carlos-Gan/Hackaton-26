@@ -1,0 +1,48 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isMember(companyId) {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/empresas/$(companyId)/miembros/$(request.auth.uid));
+    }
+
+    function isOwner(companyId) {
+      return isMember(companyId)
+        && get(/databases/$(database)/documents/empresas/$(companyId)/miembros/$(request.auth.uid)).data.rol == 'owner';
+    }
+
+    match /empresas/{companyId} {
+      allow read: if true;
+      allow create, update, delete: if isOwner(companyId);
+
+      match /productos/{productId} {
+        allow read: if resource.data.activo == true;
+        allow create, update, delete: if isOwner(companyId);
+      }
+
+      match /pedidos/{orderId} {
+        allow create: if request.resource.data.keys().hasAll([
+            'cliente', 'productos', 'total', 'entrega', 'estado', 'creadoEn'
+          ])
+          && request.resource.data.keys().hasOnly([
+            'cliente', 'productos', 'total', 'entrega', 'estado', 'creadoEn'
+          ])
+          && request.resource.data.cliente is string
+          && request.resource.data.productos is list
+          && request.resource.data.productos.size() > 0
+          && request.resource.data.total is number
+          && request.resource.data.total > 0
+          && request.resource.data.entrega is string
+          && request.resource.data.estado == 'Pendiente de pago'
+          && request.resource.data.creadoEn is timestamp;
+
+        allow read, update, delete: if isMember(companyId);
+      }
+
+      match /miembros/{memberId} {
+        allow read: if request.auth != null && request.auth.uid == memberId;
+        allow write: if false;
+      }
+    }
+  }
+}
