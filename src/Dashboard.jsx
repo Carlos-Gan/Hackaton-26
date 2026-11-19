@@ -73,7 +73,11 @@ function clockMinutes(order) {
 }
 
 function orderItems(order) {
-  return (order.productos || []).map((item) => `${item.cantidad || 1}x ${item.nombre || 'Producto'}`).join(', ') || 'Sin detalle de productos'
+  return (order.productos || []).map((item) => { const custom = item.personalizacion; const details = custom ? [custom.ocasion, custom.tamano, custom.sabor, custom.relleno, custom.decoracion, custom.diseno && 'Diseño: ' + custom.diseno, custom.mensaje && 'Texto: ' + custom.mensaje].filter(Boolean).join(' / ') : ''; return `${item.cantidad || 1}x ${item.nombre || 'Producto'}${details ? ' (' + details + ')' : ''}` }).join(', ') || 'Sin detalle de productos'
+}
+
+function orderTotalText(order) {
+  return clean(order.estado || '').includes('cotiz') ? 'Por cotizar' : `${money.format(Number(order.total) || 0)} MXN`
 }
 
 function orderFolio(order) {
@@ -95,10 +99,10 @@ function OrderCard({ order, onStatus, onTicket }) {
       <p className="mt-2 flex items-center gap-2 text-xs font-semibold text-emerald-700"><span aria-hidden="true">◷</span>{timeOf(order.entrega)}</p>
       <p className="mt-2 min-h-9 text-xs leading-relaxed text-slate-600">{orderItems(order)}</p>
       <div className={`mt-2 rounded-lg px-2.5 py-2 text-[11px] font-medium ${invalid ? 'bg-rose-50 text-rose-700' : pending ? 'bg-amber-50 text-amber-800' : 'bg-emerald-50 text-emerald-700'}`}>
-        {invalid ? 'Comprobante por revisar' : pending ? '◷  Anticipo pendiente de validar' : `✓  ${order.estado || 'Pago validado'}${order.anticipo ? ` (${money.format(order.anticipo)})` : ''}`}
+        {invalid ? 'Comprobante por revisar' : clean(order.estado || '').includes('cotiz') ? 'Pastel personalizado ? precio por confirmar' : pending ? '◷  Anticipo pendiente de validar' : `✓  ${order.estado || 'Pago validado'}${order.anticipo ? ` (${money.format(order.anticipo)})` : ''}`}
       </div>
       <div className="mt-3 flex items-center justify-between gap-2">
-        <strong className="text-sm font-bold text-slate-900">{money.format(Number(order.total) || 0)} MXN</strong>
+        <strong className="text-sm font-bold text-slate-900">{orderTotalText(order)}</strong>
         <button onClick={() => onTicket(order)} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11px] font-medium text-slate-600 hover:bg-slate-50">▤ Ver ticket</button>
       </div>
       {stage !== workflow[3] && <label className="mt-3 block"><span className="sr-only">Cambiar estado</span><select value={stage} onChange={(event) => onStatus(order, event.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[10px] text-slate-500 outline-none focus:border-emerald-600">{workflow.map((status) => <option key={status}>{status}</option>)}</select></label>}
@@ -136,23 +140,13 @@ function WeeklyPlanner({ orders }) {
 }
 
 function StockItem({ product, canEdit, onChange, onEdit, forecast }) {
+  const madeToOrder = product.modoVenta === 'bajoPedido'
   const stock = Number(product.stock) || 0
   const max = Number(product.stockMaximo) || Math.max(stock, 24)
   const percentage = Math.min((stock / max) * 100, 100)
-  const alert = stock <= 2 ? { text: 'Stock crítico', cls: 'bg-rose-50 text-rose-700', bar: 'bg-rose-500' } : stock <= 5 ? { text: 'Por agotarse', cls: 'bg-amber-50 text-amber-800', bar: 'bg-amber-500' } : { text: 'Disponible', cls: 'bg-emerald-50 text-emerald-700', bar: 'bg-emerald-500' }
-  return (
-    <div className="border-t border-slate-100 py-4 first:border-0 first:pt-0">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold text-slate-700">{product.nombre}</p><p className="mt-2 w-fit rounded-md px-2 py-1 text-[10px] font-medium"><span className={`${alert.cls} rounded-md px-2 py-1`}>{alert.text}</span></p>{canEdit && <button onClick={() => onEdit(product)} className="mt-2 text-[10px] font-semibold text-emerald-800 hover:underline">Editar nombre y precio</button>}</div>
-        <div className="flex shrink-0 overflow-hidden rounded-lg border border-slate-200"><button disabled={!canEdit || stock <= 0} onClick={() => onChange(product, -1)} aria-label={`Restar stock a ${product.nombre}`} className="grid size-9 place-items-center text-lg text-slate-600 hover:bg-slate-50 disabled:opacity-40">−</button><button disabled={!canEdit} onClick={() => onChange(product, 1)} aria-label={`Sumar stock a ${product.nombre}`} className="grid size-9 place-items-center border-l border-slate-200 text-lg text-slate-600 hover:bg-slate-50 disabled:opacity-40">+</button></div>
-      </div>
-      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100"><div className={`h-full rounded-full ${alert.bar}`} style={{ width: `${percentage}%` }} /></div>
-      <p className="mt-1.5 text-[10px] text-slate-500">{stock} {product.unidad || 'pzas'} disponibles</p>
-      {forecast && <p className={`mt-2 rounded-lg px-2.5 py-2 text-[10px] leading-relaxed ${forecast.tone}`}>{forecast.message}</p>}
-    </div>
-  )
+  const alert = stock <= 2 ? { text: 'Stock critico', cls: 'bg-rose-50 text-rose-700', bar: 'bg-rose-500' } : stock <= 5 ? { text: 'Por agotarse', cls: 'bg-amber-50 text-amber-800', bar: 'bg-amber-500' } : { text: 'Disponible', cls: 'bg-emerald-50 text-emerald-700', bar: 'bg-emerald-500' }
+  return <div className="border-t border-slate-100 py-4 first:border-0 first:pt-0"><div className="flex items-start justify-between gap-3"><div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold text-slate-700">{product.nombre}</p><p className="mt-2 w-fit rounded-md px-2 py-1 text-[10px] font-medium"><span className={madeToOrder ? 'rounded-md bg-violet-50 px-2 py-1 text-violet-800' : alert.cls + ' rounded-md px-2 py-1'}>{madeToOrder ? 'Se prepara bajo pedido' : alert.text}</span></p>{madeToOrder && <p className="mt-1 text-[10px] text-slate-500">Anticipacion minima: {Number(product.anticipacionDias) || 2} dias</p>}{canEdit && <button onClick={() => onEdit(product)} className="mt-2 text-[10px] font-semibold text-emerald-800 hover:underline">Editar producto</button>}</div>{!madeToOrder && <div className="flex shrink-0 overflow-hidden rounded-lg border border-slate-200"><button disabled={!canEdit || stock <= 0} onClick={() => onChange(product, -1)} aria-label={'Restar stock a ' + product.nombre} className="grid size-9 place-items-center text-lg text-slate-600 hover:bg-slate-50 disabled:opacity-40">-</button><button disabled={!canEdit} onClick={() => onChange(product, 1)} aria-label={'Sumar stock a ' + product.nombre} className="grid size-9 place-items-center border-l border-slate-200 text-lg text-slate-600 hover:bg-slate-50 disabled:opacity-40">+</button></div>}</div>{!madeToOrder && <><div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100"><div className={'h-full rounded-full ' + alert.bar} style={{ width: percentage + '%' }} /></div><p className="mt-1.5 text-[10px] text-slate-500">{stock} {product.unidad || 'pzas'} disponibles</p>{forecast && <p className={'mt-2 rounded-lg px-2.5 py-2 text-[10px] leading-relaxed ' + forecast.tone}>{forecast.message}</p>}</>}</div>
 }
-
 function Login({ companyName }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -172,22 +166,22 @@ function ProductDialog({ product, onClose, onSave, saving, error }) {
   const [price, setPrice] = useState(product?.precio ?? '')
   const [stock, setStock] = useState(product?.stock ?? '')
   const [unit, setUnit] = useState(product?.unidad || 'pzas')
+  const [mode, setMode] = useState(product?.modoVenta || 'inventario')
+  const [leadDays, setLeadDays] = useState(product?.anticipacionDias || 2)
   const [formError, setFormError] = useState('')
   async function submit(event) {
     event.preventDefault()
-    if (!name.trim() || Number(price) <= 0 || Number(stock) < 0) {
-      setFormError('Escribe un nombre, un precio mayor a cero y existencias válidas.')
+    if (!name.trim() || Number(price) <= 0 || (mode === 'inventario' && !editing && Number(stock) < 0)) {
+      setFormError('Escribe nombre, precio valido y existencias correctas.')
       return
     }
     setFormError('')
-    const values = editing
-      ? { nombre: name.trim(), precio: Number(price) }
-      : { nombre: name.trim(), precio: Number(price), stock: Number(stock), stockMaximo: Math.max(Number(stock), 1), unidad: unit, activo: true, creadoEn: serverTimestamp() }
+    const values = { nombre: name.trim(), precio: Number(price), modoVenta: mode, anticipacionDias: mode === 'bajoPedido' ? Math.max(1, Number(leadDays) || 2) : 0 }
+    if (!editing) Object.assign(values, { stock: mode === 'bajoPedido' ? 0 : Number(stock), stockMaximo: Math.max(Number(stock) || 1, 1), unidad: unit, activo: true, creadoEn: serverTimestamp() })
     await onSave(values)
   }
-  return <div role="presentation" onClick={onClose} className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4"><section role="dialog" aria-modal="true" aria-label={editing ? 'Editar producto' : 'Agregar producto'} onClick={(event) => event.stopPropagation()} className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl"><div className="flex items-start justify-between"><div><h2 className="text-xl font-bold text-slate-900">{editing ? 'Editar producto' : 'Nuevo producto'}</h2><p className="mt-1 text-sm text-slate-500">{editing ? 'Actualiza el nombre o el precio.' : 'Se agregará al catálogo de esta empresa.'}</p></div><button type="button" onClick={onClose} className="grid size-8 place-items-center rounded-full bg-slate-100 text-slate-600">×</button></div><form onSubmit={submit} className="mt-5 space-y-4"><label className="block text-sm font-medium text-slate-700">Nombre<input required maxLength={80} value={name} onChange={(event) => setName(event.target.value)} placeholder="Pastel de Chocolate" className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-emerald-600" /></label><label className="block text-sm font-medium text-slate-700">Precio (MXN)<input required type="number" min="0.01" step="0.01" value={price} onChange={(event) => setPrice(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-emerald-600" /></label>{!editing && <><label className="block text-sm font-medium text-slate-700">Existencias<input required type="number" min="0" step="1" value={stock} onChange={(event) => setStock(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-emerald-600" /></label><label className="block text-sm font-medium text-slate-700">Unidad<select value={unit} onChange={(event) => setUnit(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-emerald-600"><option value="pzas">Piezas</option><option value="docenas">Docenas</option><option value="kg">Kilogramos</option><option value="litros">Litros</option></select></label></>}{(formError || error) && <p role="alert" className="text-sm text-rose-700">{formError || error}</p>}<button disabled={saving} className="w-full rounded-xl bg-[#087d60] px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-900 disabled:opacity-50">{saving ? 'Guardando…' : editing ? 'Guardar cambios' : 'Guardar producto'}</button></form></section></div>
+  return <div role="presentation" onClick={onClose} className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4"><section role="dialog" aria-modal="true" aria-label={editing ? 'Editar producto' : 'Agregar producto'} onClick={(event) => event.stopPropagation()} className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl"><div className="flex items-start justify-between"><div><h2 className="text-xl font-bold text-slate-900">{editing ? 'Editar producto' : 'Nuevo producto'}</h2><p className="mt-1 text-sm text-slate-500">Configura el catalogo y su forma de venta.</p></div><button type="button" onClick={onClose} className="grid size-8 place-items-center rounded-full bg-slate-100 text-slate-600">?</button></div><form onSubmit={submit} className="mt-5 space-y-4"><label className="block text-sm font-medium text-slate-700">Nombre<input required maxLength={80} value={name} onChange={(event) => setName(event.target.value)} placeholder="Pastel personalizado" className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm" /></label><label className="block text-sm font-medium text-slate-700">Precio base (MXN)<input required type="number" min="0.01" step="0.01" value={price} onChange={(event) => setPrice(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm" /></label><label className="block text-sm font-medium text-slate-700">Modalidad<select value={mode} onChange={(event) => setMode(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm"><option value="inventario">Producto con stock disponible</option><option value="bajoPedido">Preparar bajo pedido</option></select></label>{mode === 'bajoPedido' ? <label className="block text-sm font-medium text-slate-700">Anticipacion minima (dias)<input required type="number" min="1" max="60" value={leadDays} onChange={(event) => setLeadDays(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm" /><span className="mt-1 block text-xs font-normal text-slate-500">Los clientes podran elegir entrega a partir de ese plazo.</span></label> : <>{!editing && <label className="block text-sm font-medium text-slate-700">Existencias<input required type="number" min="0" step="1" value={stock} onChange={(event) => setStock(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm" /></label>}<label className="block text-sm font-medium text-slate-700">Unidad<select value={unit} onChange={(event) => setUnit(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm"><option value="pzas">Piezas</option><option value="docenas">Docenas</option><option value="kg">Kilogramos</option><option value="litros">Litros</option></select></label></>}{(formError || error) && <p role="alert" className="text-sm text-rose-700">{formError || error}</p>}<button disabled={saving} className="w-full rounded-xl bg-[#087d60] px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{saving ? 'Guardando...' : editing ? 'Guardar cambios' : 'Guardar producto'}</button></form></section></div>
 }
-
 export default function Dashboard({ companyName, activeTab, onTabChange, onOpenChat }) {
   const [orders, setOrders] = useState([])
   const [products, setProducts] = useState([])
@@ -200,6 +194,7 @@ export default function Dashboard({ companyName, activeTab, onTabChange, onOpenC
   const [error, setError] = useState('')
   const [search, setSearch] = useState('')
   const [period, setPeriod] = useState('today')
+  const [targetDays, setTargetDays] = useState(14)
   const [ticket, setTicket] = useState(null)
   const [createOpen, setCreateOpen] = useState(false)
   const [editingProduct, setEditingProduct] = useState(null)
@@ -247,7 +242,8 @@ export default function Dashboard({ companyName, activeTab, onTabChange, onOpenC
     return date && date.toDateString() === now.toDateString()
   })
   const validatedRevenue = todayOrders.filter((order) => stateOf(order) !== workflow[0]).reduce((sum, order) => sum + (Number(order.total) || 0), 0)
-  const lowStock = products.filter((product) => Number(product.stock) <= 5)
+  const lowStock = products.filter((product) => product.modoVenta !== 'bajoPedido' && Number(product.stock) <= 5)
+  const forecastProducts = products.filter((product) => product.modoVenta !== 'bajoPedido')
   const forecastByProduct = useMemo(() => {
     const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000
     const sales = new Map()
@@ -256,27 +252,33 @@ export default function Dashboard({ companyName, activeTab, onTabChange, onOpenC
       if (!date || date.getTime() < cutoff || stateOf(order) === workflow[0] || clean(order.estado || '').includes('cancel')) continue
       for (const item of order.productos || []) {
         if (!item.productoId) continue
-        const record = sales.get(item.productoId) || { units: 0, days: new Set() }
-        record.units += Number(item.cantidad) || 0
+        const record = sales.get(item.productoId) || { units: 0, days: new Set(), weeklyUnits: [0, 0, 0, 0] }
+        const quantity = Number(item.cantidad) || 0
+        record.units += quantity
         record.days.add(date.toDateString())
+        const weekIndex = Math.floor((Date.now() - date.getTime()) / (7 * 24 * 60 * 60 * 1000))
+        if (weekIndex >= 0 && weekIndex < 4) record.weeklyUnits[3 - weekIndex] += quantity
         sales.set(item.productoId, record)
       }
     }
-    return new Map(products.map((product) => {
+    return new Map(products.filter((product) => product.modoVenta !== 'bajoPedido').map((product) => {
       const record = sales.get(product.id)
       const units = record?.units || 0
       const salesDays = record?.days.size || 0
-      if (!units) return [product.id, { message: 'Sin ventas validadas en los últimos 30 días.', tone: 'bg-slate-50 text-slate-500' }]
-      if (salesDays < 4) return [product.id, { message: `Aún hay pocos datos: ${units} ${product.unidad || 'pzas'} vendidos en ${salesDays} días.`, tone: 'bg-slate-50 text-slate-600' }]
       const dailyRate = units / 30
-      const daysLeft = dailyRate ? Math.floor((Number(product.stock) || 0) / dailyRate) : null
-      const target = Math.ceil(dailyRate * 14)
-      const restock = Math.max(0, target - (Number(product.stock) || 0))
-      const tone = daysLeft <= 7 ? 'bg-rose-50 text-rose-700' : daysLeft <= 14 ? 'bg-amber-50 text-amber-800' : 'bg-emerald-50 text-emerald-800'
-      const coverage = daysLeft <= 14 ? ` · Reponer ${restock} para cubrir 14 días.` : ''
-      return [product.id, { message: `Pronóstico: ~${daysLeft} días de stock al ritmo de ${dailyRate.toFixed(1)}/día${coverage}`, tone }]
+      const stock = Number(product.stock) || 0
+      const daysLeft = units && dailyRate ? Math.floor(stock / dailyRate) : null
+      const weeklyUnits = record?.weeklyUnits || [0, 0, 0, 0]
+      if (!units) return [product.id, { units30: 0, salesDays: 0, weeklyUnits, dailyRate: 0, daysLeft: null, restock: null, confidence: 'Sin datos', message: 'Sin ventas validadas en los últimos 30 días.', tone: 'bg-slate-50 text-slate-500' }]
+      if (salesDays < 4) return [product.id, { units30: units, salesDays, weeklyUnits, dailyRate, daysLeft: null, restock: null, confidence: 'Datos iniciales', message: `Aún hay pocos datos: ${units} ${product.unidad || 'pzas'} vendidos en ${salesDays} días.`, tone: 'bg-slate-50 text-slate-600' }]
+      const daysTarget = targetDays
+      const restock = Math.max(0, Math.ceil(dailyRate * daysTarget - stock))
+      const tone = daysLeft <= 7 ? 'bg-rose-50 text-rose-700' : daysLeft <= daysTarget ? 'bg-amber-50 text-amber-800' : 'bg-emerald-50 text-emerald-800'
+      const coverage = daysLeft <= daysTarget ? ` · Reponer ${restock} para cubrir ${daysTarget} días.` : ''
+      const confidence = salesDays >= 10 ? 'Estable' : 'Moderada'
+      return [product.id, { units30: units, salesDays, weeklyUnits, dailyRate, daysLeft, restock, confidence, message: `Pronóstico: ~${daysLeft} días de stock al ritmo de ${dailyRate.toFixed(1)}/día${coverage}`, tone }]
     }))
-  }, [orders, products])
+  }, [orders, products, targetDays])
   const filteredOrders = useMemo(() => {
     const needle = clean(search).replace(/^#\s*/, '')
     const minDate = new Date()
@@ -378,7 +380,7 @@ export default function Dashboard({ companyName, activeTab, onTabChange, onOpenC
       </header>
 
       <nav className="border-b border-slate-200 bg-white px-5 lg:px-8"><div className="mx-auto flex max-w-[1800px] items-center gap-7 overflow-x-auto">
-        {[['live', '▦', 'Operación en vivo'], ['history', '◷', 'Historial de pedidos'], ['inventory', '▤', 'Inventario']].map(([key, icon, label]) => <button key={key} onClick={() => onTabChange(key)} className={`relative flex h-14 shrink-0 items-center gap-3 text-sm font-semibold ${activeTab === key ? 'text-emerald-700' : 'text-slate-500 hover:text-slate-800'}`}><span className="text-lg">{icon}</span>{label}{activeTab === key && <i className="absolute inset-x-0 bottom-0 h-[3px] rounded-t bg-emerald-700" />}</button>)}
+        {[['live', '▦', 'Operación en vivo'], ['history', '◷', 'Historial de pedidos'], ['inventory', '▤', 'Inventario'], ['forecast', '↗', 'Pronóstico']].map(([key, icon, label]) => <button key={key} onClick={() => onTabChange(key)} className={`relative flex h-14 shrink-0 items-center gap-3 text-sm font-semibold ${activeTab === key ? 'text-emerald-700' : 'text-slate-500 hover:text-slate-800'}`}><span className="text-lg">{icon}</span>{label}{activeTab === key && <i className="absolute inset-x-0 bottom-0 h-[3px] rounded-t bg-emerald-700" />}</button>)}
         <span className="ml-auto hidden shrink-0 items-center gap-2 py-4 text-sm text-slate-500 sm:flex">▦ <span className="capitalize">{dateText}</span></span>
         <button onClick={onOpenChat} className="ml-auto shrink-0 py-4 text-xs font-medium text-emerald-700 hover:text-emerald-900 sm:ml-0">Abrir chat</button>
         <button onClick={() => signOut(auth)} className="shrink-0 py-4 text-xs font-medium text-slate-500 hover:text-slate-900">Cerrar sesión</button>
@@ -395,21 +397,69 @@ export default function Dashboard({ companyName, activeTab, onTabChange, onOpenC
           <InventoryPanel products={products} canEdit={isOwner} onChange={changeStock} forecastByProduct={forecastByProduct} onCreate={() => { setError(''); setCreateOpen(true) }} onEdit={(product) => { setError(''); setEditingProduct(product) }} />
         </div>}
 
-        {activeTab === 'history' && <section><div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-2xl font-bold text-slate-900">Historial de pedidos</h2><p className="mt-1 text-sm text-slate-500">Todos los pedidos de {companyName}.</p></div><span className="text-sm text-slate-500">{filteredOrders.length} resultados</span></div><div className="mt-5 overflow-hidden rounded-2xl border border-slate-200 bg-white"><div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-5 py-3">Orden</th><th className="px-5 py-3">Cliente</th><th className="px-5 py-3">Productos</th><th className="px-5 py-3">Entrega</th><th className="px-5 py-3">Total</th><th className="px-5 py-3">Estado</th><th className="px-5 py-3" /></tr></thead><tbody className="divide-y divide-slate-100">{filteredOrders.map((order) => <tr key={order.id}><td className="px-5 py-4 font-semibold">#{order.id.slice(-6).toUpperCase()}</td><td className="px-5 py-4">{order.cliente || 'Cliente'}</td><td className="max-w-xs truncate px-5 py-4 text-slate-500">{orderItems(order)}</td><td className="px-5 py-4">{timeOf(order.entrega)}</td><td className="px-5 py-4 font-semibold">{money.format(order.total || 0)}</td><td className="px-5 py-4"><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs">{order.estado}</span></td><td className="px-5 py-4"><button onClick={() => setTicket(order)} className="text-xs font-semibold text-emerald-800">Ver ticket</button></td></tr>)}</tbody></table>{filteredOrders.length === 0 && <p className="p-12 text-center text-sm text-slate-500">No hay pedidos para mostrar.</p>}</div></div></section>}
+        {activeTab === 'history' && <section><div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-2xl font-bold text-slate-900">Historial de pedidos</h2><p className="mt-1 text-sm text-slate-500">Todos los pedidos de {companyName}.</p></div><span className="text-sm text-slate-500">{filteredOrders.length} resultados</span></div><div className="mt-5 overflow-hidden rounded-2xl border border-slate-200 bg-white"><div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-5 py-3">Orden</th><th className="px-5 py-3">Cliente</th><th className="px-5 py-3">Productos</th><th className="px-5 py-3">Entrega</th><th className="px-5 py-3">Total</th><th className="px-5 py-3">Estado</th><th className="px-5 py-3" /></tr></thead><tbody className="divide-y divide-slate-100">{filteredOrders.map((order) => <tr key={order.id}><td className="px-5 py-4 font-semibold">#{order.id.slice(-6).toUpperCase()}</td><td className="px-5 py-4">{order.cliente || 'Cliente'}</td><td className="max-w-xs truncate px-5 py-4 text-slate-500">{orderItems(order)}</td><td className="px-5 py-4">{timeOf(order.entrega)}</td><td className="px-5 py-4 font-semibold">{orderTotalText(order)}</td><td className="px-5 py-4"><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs">{order.estado}</span></td><td className="px-5 py-4"><button onClick={() => setTicket(order)} className="text-xs font-semibold text-emerald-800">Ver ticket</button></td></tr>)}</tbody></table>{filteredOrders.length === 0 && <p className="p-12 text-center text-sm text-slate-500">No hay pedidos para mostrar.</p>}</div></div></section>}
 
         {activeTab === 'inventory' && <section><div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-2xl font-bold text-slate-900">Inventario</h2><p className="mt-1 text-sm text-slate-500">Existencias y estimación según pedidos validados de los últimos 30 días.</p></div>{isOwner && <button onClick={() => { setError(''); setCreateOpen(true) }} className="rounded-xl bg-[#087d60] px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-900">＋ Agregar producto</button>}</div><div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{products.map((product) => <div key={product.id} className="rounded-2xl border border-slate-200 bg-white p-5"><StockItem product={product} canEdit={isOwner} onChange={changeStock} onEdit={setEditingProduct} forecast={forecastByProduct.get(product.id)} /><p className="mt-2 text-xs text-slate-500">{money.format(Number(product.precio) || 0)} por unidad</p></div>)}</div>{products.length === 0 && <p className="mt-5 rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center text-sm text-slate-500">Agrega productos a la subcolección productos de esta empresa.</p>}</section>}
+
+        {activeTab === 'forecast' && <ForecastView products={forecastProducts} forecastByProduct={forecastByProduct} targetDays={targetDays} onTargetDaysChange={setTargetDays} />}
       </main>
       <footer className="mx-auto flex max-w-[1800px] items-center justify-between px-5 pb-5 text-xs text-slate-500 lg:px-8"><span className="flex items-center gap-2"><i className="size-2 rounded-full bg-emerald-500" />Todos los cambios guardados</span><span className="hidden sm:block">Sincronización en tiempo real · {companyName}</span></footer>
 
       {toast && <div className="fixed bottom-6 left-1/2 z-40 -translate-x-1/2 rounded-full bg-slate-900 px-4 py-2.5 text-xs font-medium text-white shadow-lg">{toast}</div>}
       {activeTab === 'live' && <button onClick={() => setCreateOpen(true)} className="fixed bottom-6 right-6 z-30 rounded-full bg-[#087d60] px-4 py-3 text-sm font-semibold text-white shadow-lg hover:bg-emerald-900 2xl:hidden">＋ Producto</button>}
       {(createOpen || editingProduct) && isOwner && <ProductDialog product={editingProduct} onClose={() => { setCreateOpen(false); setEditingProduct(null); setError('') }} onSave={saveProduct} saving={creating} error={error} />}
-      {ticket && <div role="presentation" onClick={() => setTicket(null)} className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4"><section role="dialog" aria-modal="true" aria-label="Detalle del pedido" onClick={(event) => event.stopPropagation()} className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl"><div className="flex items-start justify-between"><div><p className="text-xs font-medium text-emerald-700">{companyName}</p><h2 className="mt-1 text-xl font-bold">Pedido #{ticket.id.slice(-6).toUpperCase()}</h2></div><button onClick={() => setTicket(null)} className="grid size-8 place-items-center rounded-full bg-slate-100 text-slate-600">×</button></div><div className="mt-5 space-y-3 text-sm"><p><span className="text-slate-500">Cliente:</span> {ticket.cliente || 'Pedido por chat'}</p><p><span className="text-slate-500">Entrega:</span> {timeOf(ticket.entrega)}</p><div className="border-y border-dashed border-slate-200 py-3"><p className="mb-2 text-slate-500">Productos</p><p>{orderItems(ticket)}</p></div><p className="flex justify-between text-base font-bold"><span>Total</span><span>{money.format(ticket.total || 0)} MXN</span></p><p className="text-slate-500">Estado: {ticket.estado || 'Pendiente de pago'}</p></div><button onClick={() => setTicket(null)} className="mt-5 w-full rounded-xl bg-emerald-800 px-4 py-2.5 text-sm font-semibold text-white">Cerrar</button></section></div>}
+      {ticket && <div role="presentation" onClick={() => setTicket(null)} className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4"><section role="dialog" aria-modal="true" aria-label="Detalle del pedido" onClick={(event) => event.stopPropagation()} className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl"><div className="flex items-start justify-between"><div><p className="text-xs font-medium text-emerald-700">{companyName}</p><h2 className="mt-1 text-xl font-bold">Pedido #{ticket.id.slice(-6).toUpperCase()}</h2></div><button onClick={() => setTicket(null)} className="grid size-8 place-items-center rounded-full bg-slate-100 text-slate-600">×</button></div><div className="mt-5 space-y-3 text-sm"><p><span className="text-slate-500">Cliente:</span> {ticket.cliente || 'Pedido por chat'}</p><p><span className="text-slate-500">Entrega:</span> {timeOf(ticket.entrega)}</p><div className="border-y border-dashed border-slate-200 py-3"><p className="mb-2 text-slate-500">Productos</p><p>{orderItems(ticket)}</p></div><p className="flex justify-between text-base font-bold"><span>{clean(ticket.estado || '').includes('cotiz') ? 'Precio' : 'Total'}</span><span>{orderTotalText(ticket)}</span></p><p className="text-slate-500">Estado: {ticket.estado || 'Pendiente de pago'}</p></div><button onClick={() => setTicket(null)} className="mt-5 w-full rounded-xl bg-emerald-800 px-4 py-2.5 text-sm font-semibold text-white">Cerrar</button></section></div>}
     </div>
   )
 }
 
+function ForecastView({ products, forecastByProduct, targetDays, onTargetDaysChange }) {
+  const [selectedProductId, setSelectedProductId] = useState('')
+  const rows = products.map((product) => ({ product, forecast: forecastByProduct.get(product.id) }))
+  const usable = rows.filter(({ forecast }) => forecast?.daysLeft !== null && forecast?.daysLeft !== undefined)
+  const urgent = usable.filter(({ forecast }) => forecast.daysLeft <= 7)
+  const replenishment = usable.filter(({ forecast }) => forecast.restock > 0).sort((a, b) => a.forecast.daysLeft - b.forecast.daysLeft)
+  const insufficient = rows.filter(({ forecast }) => !forecast || forecast.daysLeft === null).length
+  const sorted = [...rows].sort((a, b) => (a.forecast?.daysLeft ?? Infinity) - (b.forecast?.daysLeft ?? Infinity))
+  const selectedProduct = products.find((product) => product.id === selectedProductId) || products[0]
+  const selectedForecast = selectedProduct ? forecastByProduct.get(selectedProduct.id) : null
+  const weeklySales = selectedForecast?.weeklyUnits || [0, 0, 0, 0]
+  const maxWeeklySales = Math.max(...weeklySales, 1)
+
+  useEffect(() => {
+    if (!products.some((product) => product.id === selectedProductId) && products[0]) setSelectedProductId(products[0].id)
+  }, [products, selectedProductId])
+
+  return <section>
+    <div className="flex flex-wrap items-end justify-between gap-4"><div><p className="text-sm font-medium text-emerald-800">Planeación de inventario</p><h2 className="mt-1 text-2xl font-bold text-slate-900 sm:text-3xl">Pronóstico de productos</h2><p className="mt-2 text-sm text-slate-500">Proyección basada en pedidos con pago validado durante los últimos 30 días.</p></div><label className="w-full max-w-xs rounded-xl border border-slate-200 bg-white px-4 py-3"><span className="flex items-center justify-between gap-3 text-xs font-medium text-slate-600"><span>Cobertura objetivo al reponer</span><strong className="text-sm text-emerald-800">{targetDays} días</strong></span><input type="range" min="7" max="30" value={targetDays} onChange={(event) => onTargetDaysChange(Number(event.target.value))} className="mt-2 w-full accent-emerald-700" /></label></div>
+
+    <div className="mt-6 grid gap-3 sm:grid-cols-3">
+      <MetricCard label="Productos en riesgo" value={urgent.length} tone="text-rose-700" />
+      <MetricCard label="Reposiciones sugeridas" value={replenishment.length} tone="text-amber-700" />
+      <MetricCard label="Necesitan más historial" value={insufficient} tone="text-slate-500" />
+    </div>
+
+    <div className="mt-5 grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(300px,.8fr)]">
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="font-semibold text-slate-900">Ventas por semana</h3><p className="mt-1 text-xs text-slate-500">Tendencia reciente del producto seleccionado</p></div><select value={selectedProduct?.id || ''} onChange={(event) => setSelectedProductId(event.target.value)} className="max-w-52 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 outline-none focus:border-emerald-600">{products.map((product) => <option key={product.id} value={product.id}>{product.nombre}</option>)}</select></div>
+        {selectedProduct ? <div role="img" aria-label={`Ventas semanales de ${selectedProduct.nombre}`} className="mt-5 grid h-44 grid-cols-4 items-end gap-3 border-b border-slate-100 px-2 sm:gap-6">{weeklySales.map((amount, index) => <div key={index} className="flex h-full flex-col items-center justify-end gap-2"><span className="text-[10px] font-semibold text-slate-500">{amount || ''}</span><div className="flex h-32 w-full items-end justify-center rounded-t-lg bg-slate-50"><div className={`w-3/5 min-w-5 rounded-t-md transition-all ${index === 3 ? 'bg-emerald-600' : 'bg-emerald-300'}`} style={{ height: `${amount ? Math.max(8, (amount / maxWeeklySales) * 100) : 3}%` }} /></div><span className="whitespace-nowrap text-[9px] text-slate-500">{['Hace 3 sem.', 'Hace 2 sem.', 'Semana pasada', 'Esta semana'][index]}</span></div>)}</div> : <p className="mt-6 rounded-xl bg-slate-50 p-8 text-center text-sm text-slate-500">Agrega productos para comparar sus ventas.</p>}
+        <div className="mt-4 flex items-center justify-between text-[10px] text-slate-400"><span>Unidades vendidas</span><span>Pedidos con pago validado</span></div>
+      </section>
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><div><h3 className="font-semibold text-slate-900">Recomendaciones de reposición</h3><p className="mt-1 text-xs text-slate-500">Productos que no alcanzan tu cobertura objetivo</p></div><div className="mt-4 space-y-3">{replenishment.slice(0, 5).map(({ product, forecast }) => <article key={product.id} className="rounded-xl border border-amber-100 bg-amber-50/60 p-3"><div className="flex items-start justify-between gap-2"><div className="min-w-0"><p className="truncate text-xs font-semibold text-slate-800">{product.nombre}</p><p className="mt-1 text-[10px] text-slate-500">Quedan {Number(product.stock) || 0} · ~{forecast.daysLeft} días</p></div><span className="shrink-0 rounded-full bg-amber-100 px-2 py-1 text-[10px] font-bold text-amber-900">+{forecast.restock} {product.unidad || 'pzas'}</span></div><div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white"><div className={`h-full rounded-full ${forecast.daysLeft <= 7 ? 'bg-rose-500' : 'bg-amber-500'}`} style={{ width: `${Math.min(100, (forecast.daysLeft / targetDays) * 100)}%` }} /></div></article>)}{!replenishment.length && <div className="rounded-xl bg-emerald-50 p-4 text-xs leading-relaxed text-emerald-800">Todo el inventario con historial suficiente cubre la meta de {targetDays} días.</div>}{insufficient > 0 && <p className="text-[10px] leading-relaxed text-slate-400">{insufficient} producto(s) aún requieren más ventas validadas para estimar su demanda.</p>}</div></section>
+    </div>
+
+    <section className="mt-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><div className="flex flex-wrap items-center justify-between gap-2"><div><h3 className="font-semibold text-slate-900">Cobertura estimada por producto</h3><p className="mt-1 text-xs text-slate-500">La barra se llena al alcanzar tu objetivo de {targetDays} días.</p></div><div className="flex gap-3 text-[10px] text-slate-500"><span><i className="mr-1 inline-block size-2 rounded-full bg-rose-500" />Urgente</span><span><i className="mr-1 inline-block size-2 rounded-full bg-amber-500" />Reponer</span><span><i className="mr-1 inline-block size-2 rounded-full bg-emerald-500" />Suficiente</span></div></div><div className="mt-4 grid gap-x-8 gap-y-4 md:grid-cols-2">{sorted.map(({ product, forecast }) => { const valid = forecast?.daysLeft !== null && forecast?.daysLeft !== undefined; const fill = valid ? Math.min(100, (forecast.daysLeft / targetDays) * 100) : 0; const bar = !valid ? 'bg-slate-300' : forecast.daysLeft <= 7 ? 'bg-rose-500' : forecast.daysLeft <= targetDays ? 'bg-amber-500' : 'bg-emerald-500'; return <div key={product.id}><div className="mb-1.5 flex items-center justify-between gap-3"><span className="truncate text-xs font-medium text-slate-700">{product.nombre}</span><span className="shrink-0 text-[10px] text-slate-500">{valid ? `~${forecast.daysLeft} días` : forecast?.confidence || 'Sin datos'}</span></div><div className="h-2.5 overflow-hidden rounded-full bg-slate-100"><div className={`h-full rounded-full transition-all ${bar}`} style={{ width: `${fill}%` }} /></div></div> })}{!products.length && <p className="text-sm text-slate-500">No hay productos para pronosticar.</p>}</div></section>
+
+    <p className="mt-3 text-xs leading-relaxed text-slate-500">El ritmo diario es el promedio de unidades vendidas en 30 días. Solo se cuentan pedidos con pago validado; se requieren ventas en al menos cuatro días distintos para proyectar cobertura.</p>
+  </section>
+}
+
+function MetricCard({ label, value, tone }) {
+  return <article className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm"><p className="text-xs font-medium text-slate-500">{label}</p><p className={`mt-2 text-2xl font-bold ${tone}`}>{value}</p></article>
+}
+
 function InventoryPanel({ products, canEdit, onChange, onCreate, onEdit, forecastByProduct }) {
-  const alerts = products.filter((product) => Number(product.stock) <= 5).length
+  const alerts = products.filter((product) => product.modoVenta !== 'bajoPedido' && Number(product.stock) <= 5).length
   return <aside className="rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_1px_2px_rgba(15,23,42,.03)] sm:p-6 xl:sticky xl:top-4 xl:max-h-[calc(100vh-2rem)] xl:overflow-y-auto xl:overscroll-contain"><div className="flex items-start justify-between gap-3"><div><h2 className="text-xl font-bold text-slate-900">Inventario en Vivo</h2><p className="mt-1.5 text-xs text-slate-500">Stock y pronóstico por ventas validadas (30 días).</p><button disabled={!canEdit} onClick={onCreate} className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-100 disabled:hidden">＋ Agregar producto</button></div><span className={`shrink-0 rounded-lg px-2.5 py-1.5 text-[11px] font-semibold ${alerts ? 'bg-amber-50 text-amber-800' : 'bg-emerald-50 text-emerald-700'}`}>⚠ {alerts} alertas</span></div><div className="mt-5 border-t border-slate-200 pt-4">{products.slice(0, 8).map((product) => <StockItem key={product.id} product={product} canEdit={canEdit} onChange={onChange} onEdit={onEdit} forecast={forecastByProduct.get(product.id)} />)}{products.length === 0 && <p className="py-8 text-center text-xs text-slate-500">Aún no hay productos en el inventario.</p>}</div>{!canEdit && products.length > 0 && <p className="mt-2 text-[10px] text-slate-400">Solicita el rol owner para ajustar existencias.</p>}</aside>
 }
