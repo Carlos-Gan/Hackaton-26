@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { collection, doc, onSnapshot, query, runTransaction, serverTimestamp, setDoc, where } from 'firebase/firestore'
+import { collection, doc, getDoc, onSnapshot, query, runTransaction, serverTimestamp, where } from 'firebase/firestore'
 import { db, firebaseConfigured } from './firebase.js'
 
 const currency = new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN', maximumFractionDigits: 0 })
@@ -24,6 +24,8 @@ export default function Chat({ companyId, stores = [], onSelectStore, onOpenDash
   const [products, setProducts] = useState([])
   const [companyName, setCompanyName] = useState('Pastelería')
   const [businessType, setBusinessType] = useState('')
+  const [ordersPausedUntil, setOrdersPausedUntil] = useState('')
+  const [todayKey, setTodayKey] = useState(() => localDateValue())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [cart, setCart] = useState({})
@@ -38,12 +40,18 @@ export default function Chat({ companyId, stores = [], onSelectStore, onOpenDash
   const [storeMenuOpen, setStoreMenuOpen] = useState(false)
 
   useEffect(() => {
+    const timer = window.setInterval(() => setTodayKey(localDateValue()), 60_000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  useEffect(() => {
     if (!db || !companyId) { setLoading(false); return }
     setLoading(true)
     const stopCompany = onSnapshot(doc(db, 'empresas', companyId), (snapshot) => {
       if (snapshot.exists()) {
         setCompanyName(snapshot.data().nombre || 'Tienda')
         setBusinessType(snapshot.data().tipoNegocio || '')
+        setOrdersPausedUntil(snapshot.data().pedidosPausadosHasta || '')
       }
     })
     const productsQuery = query(collection(db, 'empresas', companyId, 'productos'), where('activo', '==', true))
@@ -63,6 +71,7 @@ export default function Chat({ companyId, stores = [], onSelectStore, onOpenDash
 
   useEffect(() => {
     setProducts([])
+    setOrdersPausedUntil('')
     setCart({})
     setCustomizations({})
     setOrderMode('choose')
@@ -73,6 +82,7 @@ export default function Chat({ companyId, stores = [], onSelectStore, onOpenDash
   }, [companyId])
 
   const chosen = useMemo(() => products.filter((item) => cart[item.id] > 0), [products, cart])
+  const availableCatalog = useMemo(() => products.filter((item) => item.modoVenta === 'bajoPedido' || Number(item.stock) > 0), [products])
   const isPizzeria = /pizzer|pizza/i.test(`${businessType} ${companyName} ${companyId || ''}`)
   const isCustomOrder = orderMode === 'custom'
   const total = chosen.reduce((sum, item) => sum + (Number(item.price) || 0) * cart[item.id], 0)
@@ -83,7 +93,9 @@ export default function Chat({ companyId, stores = [], onSelectStore, onOpenDash
     + (cakeFillingExtras[customCake.relleno] || 0)
     + (cakeDecorationExtras[customCake.decoracion] || 0) : 0
   const minLeadDays = isCustomOrder ? 3 : chosen.reduce((days, item) => item.modoVenta === 'bajoPedido' ? Math.max(days, Number(item.anticipacionDias) || 2) : days, 0)
-  const earliestDeliveryDate = localDateValue(new Date(Date.now() + minLeadDays * 24 * 60 * 60 * 1000))
+  const pausedToday = ordersPausedUntil === todayKey
+  const requiredLeadDays = Math.max(minLeadDays, pausedToday ? 1 : 0)
+  const earliestDeliveryDate = localDateValue(new Date(Date.now() + requiredLeadDays * 24 * 60 * 60 * 1000))
   useEffect(() => { if (deliveryDate < earliestDeliveryDate) setDeliveryDate(earliestDeliveryDate) }, [earliestDeliveryDate])
 
   const add = (item) => {
@@ -120,17 +132,30 @@ export default function Chat({ companyId, stores = [], onSelectStore, onOpenDash
     setSending(true)
     setError('')
     try {
+      const latestCompany = await getDoc(doc(db, 'empresas', companyId))
+      const latestPauseDate = latestCompany.data()?.pedidosPausadosHasta
+      const tomorrow = localDateValue(new Date(Date.now() + 24 * 60 * 60 * 1000))
+      if (latestPauseDate === localDateValue() && deliveryDate < tomorrow) {
+        setOrdersPausedUntil(localDateValue())
+        throw new Error('ORDERS_PAUSED_TODAY')
+      }
       const orderRef = doc(collection(db, 'empresas', companyId, 'pedidos'))
       if (isCustomOrder) {
-        await setDoc(orderRef, {
-          cliente: customerName.trim(),
-          productos: [{ productoId: 'personalizado', nombre: 'Pastel personalizado', precio: customCakeTotal, cantidad: 1, modalidad: 'personalizado', personalizacion: { ...customCake, cotizacion: { base: cakeBasePrices[customCake.tamano], extraSabor: cakeFlavorExtras[customCake.sabor] || 0, extraRelleno: cakeFillingExtras[customCake.relleno] || 0, extraDecoracion: cakeDecorationExtras[customCake.decoracion] || 0, total: customCakeTotal } } }],
-          cantidadesPorProducto: { personalizado: 1 },
-          reservaId: orderRef.id,
-          total: customCakeTotal,
-          entrega: `${deliveryDate}T${deliveryTime}`,
-          estado: 'Pendiente de pago',
-          creadoEn: serverTimestamp(),
+        await runTransaction(db, async (transaction) => {
+          const companySnapshot = await transaction.get(doc(db, 'empresas', companyId))
+          const pauseDate = companySnapshot.data()?.pedidosPausadosHasta
+          const tomorrow = localDateValue(new Date(Date.now() + 24 * 60 * 60 * 1000))
+          if (pauseDate === localDateValue() && deliveryDate < tomorrow) throw new Error('ORDERS_PAUSED_TODAY')
+          transaction.set(orderRef, {
+            cliente: customerName.trim(),
+            productos: [{ productoId: 'personalizado', nombre: 'Pastel personalizado', precio: customCakeTotal, cantidad: 1, modalidad: 'personalizado', personalizacion: { ...customCake, cotizacion: { base: cakeBasePrices[customCake.tamano], extraSabor: cakeFlavorExtras[customCake.sabor] || 0, extraRelleno: cakeFillingExtras[customCake.relleno] || 0, extraDecoracion: cakeDecorationExtras[customCake.decoracion] || 0, total: customCakeTotal } } }],
+            cantidadesPorProducto: { personalizado: 1 },
+            reservaId: orderRef.id,
+            total: customCakeTotal,
+            entrega: `${deliveryDate}T${deliveryTime}`,
+            estado: 'Pendiente de pago',
+            creadoEn: serverTimestamp(),
+          })
         })
         setSuccess(`Cotizacion automatica guardada: ${currency.format(customCakeTotal)} MXN. Folio #${orderRef.id.slice(-6).toUpperCase()}.`)
         setOrderMode('choose')
@@ -139,6 +164,10 @@ export default function Chat({ companyId, stores = [], onSelectStore, onOpenDash
         return
       }
       const reservedTotal = await runTransaction(db, async (transaction) => {
+        const companySnapshot = await transaction.get(doc(db, 'empresas', companyId))
+        const pauseDate = companySnapshot.data()?.pedidosPausadosHasta
+        const tomorrow = localDateValue(new Date(Date.now() + 24 * 60 * 60 * 1000))
+        if (pauseDate === localDateValue() && deliveryDate < tomorrow) throw new Error('ORDERS_PAUSED_TODAY')
         const currentItems = []
         for (const item of chosen) {
           const productRef = doc(db, 'empresas', companyId, 'productos', item.id)
@@ -189,7 +218,10 @@ export default function Chat({ companyId, stores = [], onSelectStore, onOpenDash
       setCustomerName('')
       setOrderMode('choose')
     } catch (orderError) {
-      if (orderError.message === 'STOCK_INSUFFICIENT') {
+      if (orderError.message === 'ORDERS_PAUSED_TODAY') {
+        setOrdersPausedUntil(localDateValue())
+        setError('El negocio pausó las entregas para hoy. Selecciona mañana o una fecha posterior.')
+      } else if (orderError.message === 'STOCK_INSUFFICIENT') {
         setError(`Stock insuficiente de ${orderError.productName}. Quedan ${orderError.available}; no se guardó el pedido.`)
       } else {
       setError('No se pudo guardar el pedido. Revisa la conexión y las reglas de Firestore.')
@@ -211,14 +243,16 @@ export default function Chat({ companyId, stores = [], onSelectStore, onOpenDash
         <p className="mx-auto w-fit rounded-full bg-white/80 px-3 py-1 text-[10px] font-medium text-stone-500">HOY</p>
         <div className="max-w-[94%] rounded-2xl rounded-tl-sm bg-white p-3 shadow-sm">
           <p className="text-xs leading-relaxed text-stone-700">¡Hola! Bienvenido a <strong>{companyName}.</strong> {isPizzeria ? 'Elige del menú lo que deseas ordenar:' : 'Elige lo que deseas ordenar hoy:'}</p>
+          {pausedToday && <p role="status" className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-[10px] leading-relaxed text-amber-900">El local está saturado para hoy. Puedes hacer tu pedido y programar la entrega desde mañana.</p>}
           {(!firebaseConfigured || !companyId) && <p className="mt-3 rounded-lg bg-amber-50 p-2.5 text-[11px] text-amber-900">Configura Firebase y el ID de empresa en <code>.env.local</code> para cargar el catálogo.</p>}
           {error && <p role="alert" className="mt-3 rounded-lg bg-rose-50 p-2.5 text-[11px] text-rose-800">{error}</p>}
           {loading && <p className="mt-3 text-[11px] text-stone-400">Consultando productos…</p>}
-          {orderMode === 'catalog' && !loading && firebaseConfigured && !error && products.length === 0 && <p className="mt-3 rounded-lg bg-stone-50 p-3 text-[11px] leading-relaxed text-stone-500">Aún no hay productos activos en Firestore. Agrega documentos en la colección <code>products</code> para mostrarlos aquí.</p>}
+          {orderMode === 'catalog' && !loading && firebaseConfigured && !error && products.length === 0 && <p className="mt-3 rounded-lg bg-stone-50 p-3 text-[11px] leading-relaxed text-stone-500">Aún no hay productos activos en Firestore. Agrega documentos en la colección <code>productos</code> de esta tienda para mostrarlos aquí.</p>}
           {orderMode === 'choose' && <div className="mt-3 grid gap-2"><p className="text-[11px] font-medium text-stone-600">{isPizzeria ? '¿Qué te gustaría pedir?' : '¿Qué te gustaría hacer?'}</p><button onClick={() => setOrderMode('catalog')} className="flex items-center justify-between rounded-xl border border-stone-200 bg-stone-50 p-3 text-left hover:border-emerald-300"><span><strong className="block text-[11px] text-stone-800">{isPizzeria ? 'Ver menú' : 'Elegir del catálogo'}</strong><small className="mt-0.5 block text-[9px] text-stone-500">Productos y precios disponibles</small></span><span className="text-emerald-700">›</span></button>{!isPizzeria && <button onClick={() => setOrderMode('custom')} className="flex items-center justify-between rounded-xl border border-amber-200 bg-amber-50/70 p-3 text-left hover:border-amber-400"><span><strong className="block text-[11px] text-stone-800">Encargar un pastel personalizado</strong><small className="mt-0.5 block text-[9px] text-stone-500">Para cumpleaños, aniversarios y más</small></span><span className="text-amber-800">›</span></button>}</div>}
           {orderMode === 'catalog' && <div><button onClick={() => { setOrderMode('choose'); setCart({}) }} className="mt-3 text-[10px] font-semibold text-emerald-800">← Volver a opciones</button>{products.length === 0 && !loading && <p className="mt-2 rounded-lg bg-stone-50 p-3 text-[11px] text-stone-500">No hay productos activos en el catalogo todavia.</p>}</div>}
-          {orderMode === 'catalog' && products.length > 0 && <div className="mt-2 grid grid-cols-2 gap-2">
-            {products.map((item) => {
+          {orderMode === 'catalog' && products.length > 0 && availableCatalog.length === 0 && <p className="mt-2 rounded-lg bg-stone-50 p-3 text-[11px] text-stone-500">Por el momento todos los productos con inventario están agotados.</p>}
+          {orderMode === 'catalog' && availableCatalog.length > 0 && <div className="mt-2 grid grid-cols-2 gap-2">
+            {availableCatalog.map((item) => {
               const kind = isPizzeria ? 'pizza' : /galleta|cookie/i.test(item.name || '') ? 'cookies' : 'cake'
               const stock = Number(item.stock) || 0
               const madeToOrder = item.modoVenta === 'bajoPedido'
@@ -243,7 +277,7 @@ export default function Chat({ companyId, stores = [], onSelectStore, onOpenDash
           <p className="mt-3 text-[10px] font-medium text-stone-600">¿Cuándo lo necesitas?</p>
           {chosen.filter((item) => item.modoVenta === 'bajoPedido').map((item) => <fieldset key={item.id} className="mt-3 rounded-lg border border-amber-200 bg-amber-50/70 p-2.5"><legend className="px-1 text-[10px] font-semibold text-amber-900">Personaliza: {item.name}</legend><div className="grid grid-cols-2 gap-2"><label className="text-[9px] text-stone-600">Ocasón<select required value={customizations[item.id]?.ocasion || ''} onChange={(event) => setCustomizations((state) => ({ ...state, [item.id]: { ...state[item.id], ocasion: event.target.value } }))} className="mt-1 w-full rounded-md border border-stone-200 bg-white px-2 py-1.5 text-[10px]"><option value="">Elige una</option><option>Cumpleaños</option><option>Aniversario</option><option>Bautizo</option><option>Boda</option><option>Graduación</option><option>Otro</option></select></label><label className="text-[9px] text-stone-600">Tamaño<select required value={customizations[item.id]?.tamano || ''} onChange={(event) => setCustomizations((state) => ({ ...state, [item.id]: { ...state[item.id], tamano: event.target.value } }))} className="mt-1 w-full rounded-md border border-stone-200 bg-white px-2 py-1.5 text-[10px]"><option value="">Elige uno</option><option>Chico (6 porciones)</option><option>Mediano (12 porciones)</option><option>Grande (20 porciones)</option><option>Personalizado</option></select></label><label className="text-[9px] text-stone-600">Sabor<select required value={customizations[item.id]?.sabor || ''} onChange={(event) => setCustomizations((state) => ({ ...state, [item.id]: { ...state[item.id], sabor: event.target.value } }))} className="mt-1 w-full rounded-md border border-stone-200 bg-white px-2 py-1.5 text-[10px]"><option value="">Elige uno</option><option>Chocolate</option><option>Vainilla</option><option>Red velvet</option><option>Fresa</option><option>Otro</option></select></label><label className="text-[9px] text-stone-600">Relleno (opcional)<input maxLength={60} value={customizations[item.id]?.relleno || ''} onChange={(event) => setCustomizations((state) => ({ ...state, [item.id]: { ...state[item.id], relleno: event.target.value } }))} placeholder="Fresas, cajeta" className="mt-1 w-full rounded-md border border-stone-200 bg-white px-2 py-1.5 text-[10px]" /></label><label className="col-span-2 text-[9px] text-stone-600">Texto en el pastel (opcional)<input maxLength={60} value={customizations[item.id]?.mensaje || ''} onChange={(event) => setCustomizations((state) => ({ ...state, [item.id]: { ...state[item.id], mensaje: event.target.value } }))} placeholder="¡Feliz cumpleaños, Ana!" className="mt-1 w-full rounded-md border border-stone-200 bg-white px-2 py-1.5 text-[10px]" /></label></div></fieldset>)}
           <div className="mt-1.5 grid grid-cols-2 gap-2">
-            <label className="block min-w-0"><span className="mb-1 flex items-center gap-1 text-[9px] text-stone-500"><svg viewBox="0 0 20 20" className="size-3" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="2.5" y="4" width="15" height="13" rx="2"/><path d="M6 2.5v3M14 2.5v3M2.5 8h15"/></svg>{minLeadDays ? `Fecha (mín. ${minLeadDays} días)` : 'Fecha'}</span><input aria-label="Fecha de entrega" type="date" min={earliestDeliveryDate} value={deliveryDate < earliestDeliveryDate ? earliestDeliveryDate : deliveryDate} onChange={(event) => setDeliveryDate(event.target.value)} required className="h-9 w-full min-w-0 rounded-lg border border-emerald-100 bg-white/80 px-2 text-[10px] text-stone-800 outline-none focus:border-emerald-500" /></label>
+            <label className="block min-w-0"><span className="mb-1 flex items-center gap-1 text-[9px] text-stone-500"><svg viewBox="0 0 20 20" className="size-3" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="2.5" y="4" width="15" height="13" rx="2"/><path d="M6 2.5v3M14 2.5v3M2.5 8h15"/></svg>{pausedToday ? `Entrega (desde mañana${minLeadDays > 1 ? ` · mín. ${minLeadDays} días` : ''})` : minLeadDays ? `Fecha (mín. ${minLeadDays} días)` : 'Fecha'}</span><input aria-label="Fecha de entrega" type="date" min={earliestDeliveryDate} value={deliveryDate < earliestDeliveryDate ? earliestDeliveryDate : deliveryDate} onChange={(event) => setDeliveryDate(event.target.value)} required className="h-9 w-full min-w-0 rounded-lg border border-emerald-100 bg-white/80 px-2 text-[10px] text-stone-800 outline-none focus:border-emerald-500" /></label>
             <label className="block min-w-0"><span className="mb-1 flex items-center gap-1 text-[9px] text-stone-500"><svg viewBox="0 0 20 20" className="size-3" fill="none" stroke="currentColor" strokeWidth="1.7"><circle cx="10" cy="10" r="7.2"/><path d="M10 5.8v4.5l3 1.8" strokeLinecap="round"/></svg>Hora</span><input aria-label="Hora de entrega" type="time" value={deliveryTime} onChange={(event) => setDeliveryTime(event.target.value)} required className="h-9 w-full min-w-0 rounded-lg border border-emerald-100 bg-white/80 px-2 text-[10px] text-stone-800 outline-none focus:border-emerald-500" /></label>
           </div>
           <div className="mt-2 flex items-center justify-between text-[11px]"><span className="text-stone-600">{isCustomOrder ? 'Precio' : 'Total'}</span><strong>{isCustomOrder ? (customCake.tamano ? `${currency.format(customCakeTotal)} MXN` : 'Selecciona tamano') : `${currency.format(total)} MXN`}</strong></div>
