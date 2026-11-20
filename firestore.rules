@@ -56,7 +56,7 @@ service cloud.firestore {
             && request.resource.data.cliente == 'Venta en mostrador'
             && request.resource.data.productos is list
             && request.resource.data.productos.size() == 1
-            && saleProduct.keys().hasOnly(['productoId', 'nombre', 'precio', 'cantidad'])
+            && saleProduct.keys().hasOnly(['productoId', 'nombre', 'precio', 'cantidad', 'personalizacion'])
             && saleProduct.productoId is string
             && saleProduct.nombre is string
             && saleProduct.precio is number

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { collection, doc, getDoc, increment, onSnapshot, orderBy, query, runTransaction, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore'
+import { collection, deleteDoc, deleteField, doc, getDoc, increment, onSnapshot, orderBy, query, runTransaction, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore'
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth'
 import { auth, db, firebaseConfigured } from './firebase.js'
 
@@ -62,6 +62,20 @@ function paymentMethodOf(order) {
   return order.metodoPago || order.formaPago || order.paymentMethod || order.tipoPago || 'No registrado'
 }
 
+function configuredProductPrice(product, options = {}) {
+  const sizes = Array.isArray(product.preciosPorTamano) ? product.preciosPorTamano : []
+  if (!sizes.length) return Number(product.precio) || 0
+  const size = options.tamano || sizes[0]?.nombre
+  const base = Number(sizes.find((item) => item.nombre === size)?.precio) || 0
+  const selected = Array.isArray(options.toppings) ? options.toppings : []
+  return base + (product.opcionesTopping || []).filter((item) => selected.includes(item.nombre)).reduce((sum, item) => sum + (Number(item.precioExtra) || 0), 0)
+}
+
+function productPriceSummary(product) {
+  const prices = (product.preciosPorTamano || []).map((item) => Number(item.precio)).filter((value) => value > 0)
+  return prices.length ? `Desde ${money.format(Math.min(...prices))} según tamaño` : `${money.format(Number(product.precio) || 0)} por unidad`
+}
+
 function stateOf(order) {
   const state = clean(order.estado || '')
   if (state.includes('entregad')) return workflow[3]
@@ -89,6 +103,12 @@ function timeOf(value) {
 
 function dateKey(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
+
+function firestoreDate(value) {
+  if (!value) return null
+  const date = value.toDate?.() || (value instanceof Date ? value : new Date(value))
+  return Number.isNaN(date.getTime()) ? null : date
 }
 
 function deliveryDayKey(order) {
@@ -124,7 +144,7 @@ function clockMinutes(order) {
 }
 
 function orderItems(order) {
-  return (order.productos || []).map((item) => { const custom = item.personalizacion; const details = custom ? [custom.ocasion, custom.tamano, custom.sabor, custom.relleno, custom.decoracion, custom.diseno && 'Diseño: ' + custom.diseno, custom.mensaje && 'Texto: ' + custom.mensaje].filter(Boolean).join(' / ') : ''; return `${item.cantidad || 1}x ${item.nombre || 'Producto'}${details ? ' (' + details + ')' : ''}` }).join(', ') || 'Sin detalle de productos'
+  return (order.productos || []).map((item) => { const custom = item.personalizacion; const details = custom ? [custom.ocasion, custom.tamano, custom.toppings?.length ? 'Toppings: ' + custom.toppings.join(', ') : '', custom.componentes?.length ? 'Incluye: ' + custom.componentes.map((part) => `${part.cantidad}× ${part.nombre}${part.tamano ? ` ${part.tamano}` : ''}`).join(' + ') : '', custom.sabor, custom.relleno, custom.decoracion, custom.diseno && 'Diseño: ' + custom.diseno, custom.mensaje && 'Texto: ' + custom.mensaje].filter(Boolean).join(' / ') : ''; return `${item.cantidad || 1}x ${item.nombre || 'Producto'}${details ? ' (' + details + ')' : ''}` }).join(', ') || 'Sin detalle de productos'
 }
 
 function orderTotalText(order) {
@@ -132,7 +152,9 @@ function orderTotalText(order) {
 }
 
 function orderFolio(order) {
-  return String(order.folio || order.numeroPedido || order.id.slice(-6).toUpperCase())
+  const folio = String(order.folio || order.numeroPedido || order.id.slice(-6).toUpperCase())
+  if (order.tipo === 'mostrador') return `CAJ-${folio.replace(/^(M-|CAJ-)/i, '')}`
+  return folio
 }
 
 function CakeMark() {
@@ -144,17 +166,18 @@ function NavIcon({ name, className = 'size-4' }) {
   if (name === 'live') return <svg {...common}><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/></svg>
   if (name === 'history') return <svg {...common}><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>
   if (name === 'inventory') return <svg {...common}><path d="M4 7h16v13H4zM3 4h18v3H3zM9 11h6"/><path d="M8 20v-4h8v4"/></svg>
+  if (name === 'combos') return <svg {...common}><path d="m3 7 9-4 9 4-9 4-9-4Z"/><path d="M3 7v10l9 4 9-4V7M12 11v10M7 5l9 4"/></svg>
   if (name === 'forecast') return <svg {...common}><path d="M3 17 9 11l4 4 8-9"/><path d="M15 6h6v6"/></svg>
   if (name === 'calendar') return <svg {...common}><rect x="3.5" y="5" width="17" height="16" rx="2"/><path d="M7.5 3v4M16.5 3v4M3.5 9h17"/></svg>
   return null
 }
 
-function OrderCard({ order, onStatus, onTicket }) {
+function OrderCard({ order, onStatus, onTicket, onDragStart, onDragEnd }) {
   const stage = stateOf(order)
   const pending = stage === workflow[0]
   const invalid = clean(order.estado || '').includes('duplic') || clean(order.estado || '').includes('error')
   return (
-    <article className={`rounded-2xl border bg-white p-3.5 shadow-[0_1px_2px_rgba(15,23,42,.03)] ${invalid ? 'border-rose-300' : 'border-slate-200'}`}>
+    <article draggable onDragStart={(event) => onDragStart(event, order)} onDragEnd={onDragEnd} className={`cursor-grab rounded-2xl border bg-white p-3.5 shadow-[0_1px_2px_rgba(15,23,42,.03)] active:cursor-grabbing ${invalid ? 'border-rose-300' : 'border-slate-200'}`}>
       <div className="flex items-center justify-between text-xs font-semibold text-slate-500"><span>#{orderFolio(order)}</span><span className="text-base leading-none text-slate-400">≡</span></div>
       <h4 className="mt-2 text-[15px] font-semibold text-slate-900">{order.cliente || 'Cliente'}</h4>
       <p className="mt-2 flex items-center gap-2 text-xs font-semibold text-emerald-700"><span aria-hidden="true">◷</span>{timeOf(order.entrega)}</p>
@@ -200,29 +223,31 @@ function WeeklyPlanner({ orders }) {
   </section>
 }
 
-function StockItem({ product, canEdit, onChange, onEdit, onCounterSale, forecast }) {
+function StockItem({ product, canEdit, onChange, onEdit, onToggleActive, onDelete, onCounterSale, forecast }) {
   const madeToOrder = product.modoVenta === 'bajoPedido'
   const stock = Number(product.stock) || 0
+  const inactive = product.activo === false
   const minimumStock = Number(product.stockMinimo) || 5
   const max = Number(product.stockMaximo) || Math.max(stock, 24)
   const percentage = Math.min((stock / max) * 100, 100)
   const alert = stock <= Math.min(2, minimumStock) ? { text: 'Stock critico', cls: 'bg-rose-50 text-rose-700', bar: 'bg-rose-500' } : stock <= minimumStock ? { text: 'Por agotarse', cls: 'bg-amber-50 text-amber-800', bar: 'bg-amber-500' } : { text: 'Disponible', cls: 'bg-emerald-50 text-emerald-700', bar: 'bg-emerald-500' }
-  return <div className="border-t border-slate-100 py-4 first:border-0 first:pt-0">
+  return <div className={inactive ? 'rounded-xl border border-l-4 border-dashed border-slate-300 border-l-slate-500 bg-slate-100 p-3' : 'border-t border-slate-100 py-4 first:border-0 first:pt-0'}>
+    {inactive && <div className="mb-3 flex items-center gap-2 rounded-lg bg-slate-700 px-3 py-2 text-white"><span className="grid size-6 shrink-0 place-items-center rounded-full bg-white/15" aria-hidden="true"><svg viewBox="0 0 20 20" className="size-3.5" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="10" cy="10" r="7"/><path d="m5 15 10-10"/></svg></span><span><strong className="block text-[10px] font-bold uppercase tracking-wide">Oculto del chat</strong><span className="block text-[9px] text-slate-200">Los clientes no pueden pedir este producto.</span></span></div>}
     <div className="flex items-start justify-between gap-3">
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-semibold text-slate-700">{product.nombre}</p>
-        <p className="mt-2 w-fit rounded-md px-2 py-1 text-[10px] font-medium"><span className={madeToOrder ? 'rounded-md bg-violet-50 px-2 py-1 text-violet-800' : alert.cls + ' rounded-md px-2 py-1'}>{madeToOrder ? 'Se prepara bajo pedido' : alert.text}</span></p>
+        <p className={`truncate text-sm font-semibold ${inactive ? 'text-slate-500 line-through decoration-slate-400' : 'text-slate-700'}`}>{product.nombre}</p>
+        <p className="mt-2 w-fit rounded-md px-2 py-1 text-[10px] font-medium"><span className={inactive ? 'rounded-md bg-slate-200 px-2 py-1 text-slate-700' : madeToOrder ? 'rounded-md bg-violet-50 px-2 py-1 text-violet-800' : alert.cls + ' rounded-md px-2 py-1'}>{inactive ? 'Desactivado' : madeToOrder ? 'Se prepara bajo pedido' : alert.text}</span></p>
         {madeToOrder && <p className="mt-1 text-[10px] text-slate-500">Anticipacion minima: {Number(product.anticipacionDias) || 2} dias</p>}
-        {canEdit && <button onClick={() => onEdit(product)} className="mt-2 text-[10px] font-semibold text-emerald-800 hover:underline">Editar producto</button>}
+        {canEdit && <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1"><button onClick={() => onEdit(product)} className="text-[10px] font-semibold text-emerald-800 hover:underline">Editar</button><button onClick={() => onToggleActive(product)} className="text-[10px] font-semibold text-slate-600 hover:underline">{product.activo === false ? 'Activar' : 'Desactivar'}</button><button onClick={() => onDelete(product)} className="text-[10px] font-semibold text-rose-700 hover:underline">Eliminar</button></div>}
       </div>
       {!madeToOrder && <div className="flex shrink-0 overflow-hidden rounded-lg border border-slate-200"><button disabled={!canEdit || stock <= 0} onClick={() => onChange(product, -1)} aria-label={'Restar stock a ' + product.nombre} className="grid size-9 place-items-center text-lg text-slate-600 hover:bg-slate-50 disabled:opacity-40">-</button><button disabled={!canEdit} onClick={() => onChange(product, 1)} aria-label={'Sumar stock a ' + product.nombre} className="grid size-9 place-items-center border-l border-slate-200 text-lg text-slate-600 hover:bg-slate-50 disabled:opacity-40">+</button></div>}
     </div>
     {!madeToOrder && <>
-      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100"><div className={'h-full rounded-full ' + alert.bar} style={{ width: percentage + '%' }} /></div>
+      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-200"><div className={'h-full rounded-full ' + (inactive ? 'bg-slate-400' : alert.bar)} style={{ width: percentage + '%' }} /></div>
       <p className="mt-1.5 text-[10px] text-slate-500">{stock} {product.unidad || 'pzas'} disponibles</p>
-      {canEdit && <button disabled={stock <= 0} onClick={() => onCounterSale(product)} className="counter-sale-button mt-3 flex min-h-10 w-full items-center justify-center gap-2 rounded-lg bg-emerald-700 px-3 py-2 text-xs font-bold text-[var(--store-color-foreground)] shadow-sm transition hover:bg-emerald-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-700 disabled:shadow-none">
+      {canEdit && <button disabled={stock <= 0 || product.activo === false} onClick={() => onCounterSale(product)} className="counter-sale-button mt-3 flex min-h-10 w-full items-center justify-center gap-2 rounded-lg bg-emerald-700 px-3 py-2 text-xs font-bold text-[var(--store-color-foreground)] shadow-sm transition hover:bg-emerald-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-700 disabled:shadow-none">
         <svg viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="6" width="18" height="14" rx="2"/><path d="M7 6V4h10v2M3 11h18M8 15h3"/><circle cx="17" cy="15" r="1" fill="currentColor" stroke="none"/></svg>
-        {stock > 0 ? 'Registrar venta en mostrador' : 'Sin existencias para vender'}
+        {product.activo === false ? 'Producto desactivado' : stock > 0 ? 'Registrar venta en mostrador' : 'Sin existencias para vender'}
       </button>}
       {forecast && <p className={'mt-2 rounded-lg px-2.5 py-2 text-[10px] leading-relaxed ' + forecast.tone}>{forecast.message}</p>}
     </>}
@@ -250,28 +275,42 @@ function ProductDialog({ product, onClose, onSave, saving, error, isPizzeria }) 
   const [unit, setUnit] = useState(product?.unidad || 'pzas')
   const [mode, setMode] = useState(product?.modoVenta || 'inventario')
   const [leadDays, setLeadDays] = useState(product?.anticipacionDias || 2)
-  const [size, setSize] = useState(product?.tamano || '')
+  const [sizePrices, setSizePrices] = useState(() => {
+    const saved = product?.preciosPorTamano
+    if (Array.isArray(saved) && saved.length) return ['Chica', 'Mediana', 'Grande'].map((nombre) => ({ nombre, precio: saved.find((item) => item.nombre === nombre)?.precio ?? '' }))
+    const legacySize = product?.tamano
+    return ['Chica', 'Mediana', 'Grande'].map((nombre) => ({ nombre, precio: legacySize === nombre ? product?.precio ?? '' : '' }))
+  })
+  const [toppings, setToppings] = useState(() => Array.isArray(product?.opcionesTopping) ? product.opcionesTopping.map((item) => ({ nombre: item.nombre || '', precioExtra: item.precioExtra ?? 0 })) : [])
   const [formError, setFormError] = useState('')
   async function submit(event) {
     event.preventDefault()
-    if (!name.trim() || Number(price) <= 0 || (isPizzeria && !size) || (mode === 'inventario' && !editing && Number(stock) < 0) || (mode === 'inventario' && Number(minimumStock) < 0)) {
-      setFormError(isPizzeria ? 'Escribe el nombre, el tamaño y un precio válido.' : 'Escribe nombre, precio valido y existencias correctas.')
+    const validSizes = sizePrices.filter((item) => Number(item.precio) > 0)
+    const validToppings = toppings.filter((item) => item.nombre.trim())
+    if (!name.trim() || (isPizzeria ? !validSizes.length || validToppings.some((item) => Number(item.precioExtra) < 0) : Number(price) <= 0) || (mode === 'inventario' && !editing && Number(stock) < 0) || (mode === 'inventario' && Number(minimumStock) < 0)) {
+      setFormError(isPizzeria ? 'Agrega al menos un tamaño con precio válido. Los extras no pueden tener precio negativo.' : 'Escribe nombre, precio válido y existencias correctas.')
       return
     }
     setFormError('')
-    const values = { nombre: name.trim(), precio: Number(price), modoVenta: mode, anticipacionDias: mode === 'bajoPedido' ? Math.max(1, Number(leadDays) || 2) : 0, stockMinimo: mode === 'inventario' ? Number(minimumStock) : 0 }
-    if (isPizzeria) values.tamano = size
+    const values = { nombre: name.trim(), precio: isPizzeria ? Math.min(...validSizes.map((item) => Number(item.precio))) : Number(price), modoVenta: mode, anticipacionDias: mode === 'bajoPedido' ? Math.max(1, Number(leadDays) || 2) : 0, stockMinimo: mode === 'inventario' ? Number(minimumStock) : 0 }
+    if (isPizzeria) {
+      values.preciosPorTamano = validSizes.map((item) => ({ nombre: item.nombre, precio: Number(item.precio) }))
+      values.opcionesTopping = validToppings.map((item) => ({ nombre: item.nombre.trim(), precioExtra: Number(item.precioExtra) || 0 }))
+    }
     if (!editing) Object.assign(values, { stock: mode === 'bajoPedido' ? 0 : Number(stock), stockMaximo: Math.max(Number(stock) || 1, 1), unidad: unit, activo: true, creadoEn: serverTimestamp() })
     await onSave(values)
   }
-  return <div role="presentation" onClick={onClose} className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4"><section role="dialog" aria-modal="true" aria-label={editing ? 'Editar producto' : 'Agregar producto'} onClick={(event) => event.stopPropagation()} className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl"><div className="flex items-start justify-between"><div><h2 className="text-xl font-bold text-slate-900">{editing ? 'Editar producto' : 'Nuevo producto'}</h2><p className="mt-1 text-sm text-slate-500">Configura el catalogo y su forma de venta.</p></div><button type="button" onClick={onClose} className="grid size-8 place-items-center rounded-full bg-slate-100 text-slate-600">?</button></div><form onSubmit={submit} className="mt-5 space-y-4"><label className="block text-sm font-medium text-slate-700">Nombre<input required maxLength={80} value={name} onChange={(event) => setName(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm" /></label><label className="block text-sm font-medium text-slate-700">Precio base (MXN)<input required type="number" min="0.01" step="0.01" value={price} onChange={(event) => setPrice(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm" /></label>{isPizzeria && <label className="block text-sm font-medium text-slate-700">Tamaño<select required value={size} onChange={(event) => setSize(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm"><option value="">Selecciona un tamaño</option><option value="Chica">Chica</option><option value="Mediana">Mediana</option><option value="Grande">Grande</option></select></label>}<label className="block text-sm font-medium text-slate-700">Modalidad<select value={mode} onChange={(event) => setMode(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm"><option value="inventario">Producto con stock disponible</option><option value="bajoPedido">Preparar bajo pedido</option></select></label>{mode === 'bajoPedido' ? <label className="block text-sm font-medium text-slate-700">Anticipacion minima (dias)<input required type="number" min="1" max="60" value={leadDays} onChange={(event) => setLeadDays(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm" /><span className="mt-1 block text-xs font-normal text-slate-500">Los clientes podran elegir entrega a partir de ese plazo.</span></label> : <>{!editing && <label className="block text-sm font-medium text-slate-700">Existencias<input required type="number" min="0" step="1" value={stock} onChange={(event) => setStock(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm" /></label>}<label className="block text-sm font-medium text-slate-700">Unidad<select value={unit} onChange={(event) => setUnit(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm"><option value="pzas">Piezas</option><option value="docenas">Docenas</option><option value="kg">Kilogramos</option><option value="litros">Litros</option></select></label><label className="block text-sm font-medium text-slate-700">Stock mínimo para alerta<input required type="number" min="1" step="1" value={minimumStock} onChange={(event) => setMinimumStock(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm" /><span className="mt-1 block text-xs font-normal text-slate-500">Se incluirá en el corte de caja cuando el stock llegue a este valor.</span></label></>}{isPizzeria && <label className="block text-sm font-medium text-slate-700">Tamaño (opcional)<input type="text" value={size} onChange={(event) => setSize(event.target.value)} className="mt-1.5 block w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm" /></label>}{(formError || error) && <p role="alert" className="text-sm text-rose-700">{formError || error}</p>}<button disabled={saving} className="w-full rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{saving ? 'Guardando...' : editing ? 'Guardar cambios' : 'Guardar producto'}</button></form></section></div>
+  return <div role="presentation" onClick={onClose} className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4"><section role="dialog" aria-modal="true" aria-label={editing ? 'Editar producto' : 'Agregar producto'} onClick={(event) => event.stopPropagation()} className="max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-y-auto overscroll-contain rounded-2xl bg-white p-5 shadow-2xl"><div className="flex items-start justify-between"><div><h2 className="text-xl font-bold text-slate-900">{editing ? 'Editar producto' : 'Nuevo producto'}</h2><p className="mt-1 text-sm text-slate-500">{isPizzeria ? 'Configura tamaños y toppings de esta pizza.' : 'Configura el catálogo y su forma de venta.'}</p></div><button type="button" onClick={onClose} className="grid size-8 place-items-center rounded-full bg-slate-100 text-slate-600">×</button></div><form onSubmit={submit} className="mt-5 space-y-4"><label className="block text-sm font-medium text-slate-700">Nombre<input required maxLength={80} value={name} onChange={(event) => setName(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm" /></label>{!isPizzeria && <label className="block text-sm font-medium text-slate-700">Precio base (MXN)<input required type="number" min="0.01" step="0.01" value={price} onChange={(event) => setPrice(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm" /></label>}{isPizzeria && <fieldset className="rounded-xl border border-slate-200 p-3"><legend className="px-1 text-sm font-semibold text-slate-800">Precio por tamaño</legend><p className="mb-2 text-[11px] text-slate-500">Agrega solo los tamaños que vendes.</p><div className="grid grid-cols-3 gap-2">{sizePrices.map((item, index) => <label key={item.nombre} className="text-[11px] font-medium text-slate-600">{item.nombre}<input aria-label={`Precio ${item.nombre}`} type="number" min="0" step="0.01" value={item.precio} onChange={(event) => setSizePrices((current) => current.map((size, sizeIndex) => sizeIndex === index ? { ...size, precio: event.target.value } : size))} placeholder="MXN" className="mt-1 w-full rounded-lg border border-slate-200 px-2 py-2 text-sm" /></label>)}</div></fieldset>}{isPizzeria && <fieldset className="rounded-xl border border-slate-200 p-3"><legend className="px-1 text-sm font-semibold text-slate-800">Toppings opcionales</legend><p className="mb-2 text-[11px] text-slate-500">Define los extras y cuánto suman al precio.</p><div className="space-y-2">{toppings.map((item, index) => <div key={index} className="grid grid-cols-[1fr_110px_32px] items-center gap-2"><input aria-label={`Nombre topping ${index + 1}`} value={item.nombre} onChange={(event) => setToppings((current) => current.map((topping, toppingIndex) => toppingIndex === index ? { ...topping, nombre: event.target.value } : topping))} placeholder="Ej. Extra queso" className="min-w-0 rounded-lg border border-slate-200 px-2.5 py-2 text-xs" /><input aria-label={`Precio extra topping ${index + 1}`} type="number" min="0" step="0.01" value={item.precioExtra} onChange={(event) => setToppings((current) => current.map((topping, toppingIndex) => toppingIndex === index ? { ...topping, precioExtra: event.target.value } : topping))} className="w-full rounded-lg border border-slate-200 px-2 py-2 text-xs" /><button type="button" onClick={() => setToppings((current) => current.filter((_, toppingIndex) => toppingIndex !== index))} aria-label={`Quitar topping ${index + 1}`} className="grid size-8 place-items-center rounded-lg bg-rose-50 text-rose-700">×</button></div>)}</div><button type="button" onClick={() => setToppings((current) => [...current, { nombre: '', precioExtra: 0 }])} className="mt-2 rounded-lg border border-emerald-200 px-3 py-2 text-xs font-semibold text-emerald-800">＋ Agregar topping</button></fieldset>}<label className="block text-sm font-medium text-slate-700">Modalidad<select value={mode} onChange={(event) => setMode(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm"><option value="inventario">Producto con stock disponible</option><option value="bajoPedido">Preparar bajo pedido</option></select></label>{mode === 'bajoPedido' ? <label className="block text-sm font-medium text-slate-700">Anticipación mínima (días)<input required type="number" min="1" max="60" value={leadDays} onChange={(event) => setLeadDays(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm" /><span className="mt-1 block text-xs font-normal text-slate-500">Los clientes podrán elegir entrega a partir de ese plazo.</span></label> : <>{!editing && <label className="block text-sm font-medium text-slate-700">Existencias<input required type="number" min="0" step="1" value={stock} onChange={(event) => setStock(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm" /></label>}<label className="block text-sm font-medium text-slate-700">Unidad<select value={unit} onChange={(event) => setUnit(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm"><option value="pzas">Piezas</option><option value="docenas">Docenas</option><option value="kg">Kilogramos</option><option value="litros">Litros</option></select></label><label className="block text-sm font-medium text-slate-700">Stock mínimo para alerta<input required type="number" min="1" step="1" value={minimumStock} onChange={(event) => setMinimumStock(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm" /><span className="mt-1 block text-xs font-normal text-slate-500">Se incluirá en el corte de caja cuando el stock llegue a este valor.</span></label></>}{(formError || error) && <p role="alert" className="text-sm text-rose-700">{formError || error}</p>}<button disabled={saving} className="w-full rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{saving ? 'Guardando...' : editing ? 'Guardar cambios' : 'Guardar producto'}</button></form></section></div>
 }
 
 function CounterSaleDialog({ product, onClose, onConfirm, saving, error }) {
   const [quantity, setQuantity] = useState('1')
   const [paymentMethod, setPaymentMethod] = useState('Efectivo')
+  const [size, setSize] = useState(product.preciosPorTamano?.[0]?.nombre || '')
+  const [toppings, setToppings] = useState([])
   const stock = Number(product.stock) || 0
-  const price = Number(product.precio) || 0
+  const personalization = { ...(size ? { tamano: size } : {}), ...(toppings.length ? { toppings } : {}) }
+  const price = configuredProductPrice(product, personalization)
   const total = price * (Number(quantity) || 0)
   const paymentOptions = [
     { value: 'Efectivo', label: 'Efectivo', detail: 'Pago en caja', icon: '$' },
@@ -283,7 +322,7 @@ function CounterSaleDialog({ product, onClose, onConfirm, saving, error }) {
     event.preventDefault()
     const amount = Number(quantity)
     if (!Number.isInteger(amount) || amount < 1 || amount > stock) return
-    onConfirm({ quantity: amount, paymentMethod })
+    onConfirm({ quantity: amount, paymentMethod, personalization })
   }
 
   return <div role="presentation" onClick={saving ? undefined : onClose} onKeyDown={(event) => { if (event.key === 'Escape' && !saving) onClose() }} className="fixed inset-0 z-[70] grid place-items-center bg-slate-950/55 p-4 backdrop-blur-[2px]">
@@ -297,6 +336,7 @@ function CounterSaleDialog({ product, onClose, onConfirm, saving, error }) {
           <div className="mt-4 flex items-center justify-between rounded-xl bg-slate-50 px-3.5 py-3"><span className="text-xs text-slate-500">Precio · stock disponible</span><strong className="text-sm text-slate-800">{money.format(price)} · {stock} {product.unidad || 'pzas'}</strong></div>
         </header>
         <div className="space-y-5 px-5 py-5 sm:px-6">
+          {product.preciosPorTamano?.length > 0 && <div className="space-y-3"><label className="block text-sm font-semibold text-slate-800">Tamaño<select value={size} onChange={(event) => setSize(event.target.value)} className="mt-2 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm">{product.preciosPorTamano.map((option) => <option key={option.nombre} value={option.nombre}>{option.nombre} · {money.format(Number(option.precio) || 0)}</option>)}</select></label>{product.opcionesTopping?.length > 0 && <fieldset><legend className="mb-2 text-sm font-semibold text-slate-800">Toppings</legend><div className="space-y-2">{product.opcionesTopping.map((option) => <label key={option.nombre} className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700"><input type="checkbox" checked={toppings.includes(option.nombre)} onChange={(event) => setToppings((current) => event.target.checked ? [...current, option.nombre] : current.filter((name) => name !== option.nombre))} className="size-4 accent-emerald-700"/><span>{option.nombre}</span><span className="ml-auto text-xs text-slate-500">{Number(option.precioExtra) ? `+${money.format(Number(option.precioExtra))}` : 'Incluido'}</span></label>)}</div></fieldset>}</div>}
           <label className="block text-sm font-semibold text-slate-800">Cantidad<input autoFocus required type="number" inputMode="numeric" min="1" max={stock} step="1" value={quantity} onChange={(event) => setQuantity(event.target.value)} aria-describedby="counter-sale-stock" className="mt-2 h-12 w-full rounded-xl border border-slate-200 px-3.5 text-base font-semibold text-slate-900 outline-none transition focus:border-emerald-600 focus:ring-4 focus:ring-emerald-600/10" /><span id="counter-sale-stock" className="mt-1.5 block text-xs font-normal text-slate-500">Máximo disponible: {stock} {product.unidad || 'pzas'}.</span></label>
           <fieldset>
             <legend className="mb-2.5 text-sm font-semibold text-slate-800">Método de pago</legend>
@@ -323,6 +363,37 @@ function CounterSaleDialog({ product, onClose, onConfirm, saving, error }) {
   </div>
 }
 
+function ComboEditor({ combo, products, saving, error, onClose, onSave }) {
+  const [name, setName] = useState(combo?.nombre || '')
+  const [price, setPrice] = useState(combo?.precio ?? '')
+  const [validUntil, setValidUntil] = useState(combo?.vigenciaHasta || dateKey(new Date()))
+  const [components, setComponents] = useState(combo?.componentes?.length ? combo.componentes.map((item) => ({ productoId: item.productoId || '', cantidad: item.cantidad || 1, tamano: item.tamano || '' })) : [{ productoId: '', cantidad: 1, tamano: '' }, { productoId: '', cantidad: 1, tamano: '' }])
+  const [formError, setFormError] = useState('')
+  const availableProducts = products.filter((item) => item.tipoProducto !== 'combo' && item.activo !== false)
+
+  async function submit(event) {
+    event.preventDefault()
+    const chosen = components.filter((item) => item.productoId)
+    if (!name.trim() || Number(price) <= 0 || !validUntil || validUntil < dateKey(new Date()) || chosen.length === 0 || chosen.some((item) => !Number.isInteger(Number(item.cantidad)) || Number(item.cantidad) < 1)) {
+      setFormError('Indica nombre, precio, fecha vigente y al menos un componente con cantidad válida.')
+      return
+    }
+    const normalized = chosen.map((item) => {
+      const product = availableProducts.find((candidate) => candidate.id === item.productoId)
+      return { productoId: item.productoId, nombre: product?.nombre || 'Producto', cantidad: Number(item.cantidad), ...(item.tamano ? { tamano: item.tamano } : {}) }
+    })
+    setFormError('')
+    await onSave({ nombre: name.trim(), precio: Number(price), tipoProducto: 'combo', modoVenta: 'inventario', stock: 0, activo: true, vigenciaHasta: validUntil, componentes: normalized })
+  }
+
+  return <div role="presentation" onClick={onClose} className="fixed inset-0 z-50 grid place-items-center bg-slate-950/50 p-4"><section role="dialog" aria-modal="true" aria-label={combo ? 'Editar combo' : 'Crear combo'} onClick={(event) => event.stopPropagation()} className="max-h-[calc(100dvh-2rem)] w-full max-w-xl overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl"><header className="flex items-start justify-between"><div><p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">Promoción en catálogo</p><h2 className="mt-1 text-xl font-bold text-slate-900">{combo ? 'Editar combo' : 'Nuevo combo'}</h2><p className="mt-1 text-sm text-slate-500">Elige lo que incluye, el precio y hasta qué día aceptarlo.</p></div><button type="button" onClick={onClose} aria-label="Cerrar" className="grid size-8 place-items-center rounded-full bg-slate-100 text-slate-600">×</button></header><form onSubmit={submit} className="mt-5 space-y-4"><label className="block text-sm font-medium text-slate-700">Nombre del combo<input required maxLength={80} value={name} onChange={(event) => setName(event.target.value)} placeholder="Pizza mediana + papas chicas" className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2.5" /></label><div className="grid gap-3 sm:grid-cols-2"><label className="block text-sm font-medium text-slate-700">Precio promocional (MXN)<input required type="number" min="0.01" step="0.01" value={price} onChange={(event) => setPrice(event.target.value)} placeholder="250" className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2.5" /></label><label className="block text-sm font-medium text-slate-700">Aceptar pedidos hasta<input required type="date" min={dateKey(new Date())} value={validUntil} onChange={(event) => setValidUntil(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5" /></label></div><fieldset className="rounded-xl border border-slate-200 p-3"><legend className="px-1 text-sm font-semibold text-slate-800">Productos incluidos</legend><div className="space-y-3">{components.map((component, index) => { const selected = availableProducts.find((item) => item.id === component.productoId); const sizes = selected?.preciosPorTamano || []; return <div key={index} className="grid gap-2 rounded-lg bg-slate-50 p-2 sm:grid-cols-[minmax(0,1fr)_80px_130px_34px] sm:items-end"><label className="text-[11px] font-medium text-slate-600">Producto<select required value={component.productoId} onChange={(event) => setComponents((current) => current.map((row, rowIndex) => rowIndex === index ? { productoId: event.target.value, cantidad: row.cantidad, tamano: '' } : row))} className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs"><option value="">Selecciona producto</option>{availableProducts.map((item) => <option key={item.id} value={item.id}>{item.nombre}</option>)}</select></label><label className="text-[11px] font-medium text-slate-600">Cantidad<input type="number" min="1" max="99" value={component.cantidad} onChange={(event) => setComponents((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, cantidad: event.target.value } : row))} className="mt-1 w-full rounded-lg border border-slate-200 px-2 py-2 text-xs" /></label>{sizes.length > 0 && <label className="text-[11px] font-medium text-slate-600">Tamaño<select value={component.tamano || sizes[0].nombre} onChange={(event) => setComponents((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, tamano: event.target.value } : row))} className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs">{sizes.map((size) => <option key={size.nombre} value={size.nombre}>{size.nombre}</option>)}</select></label>}<button type="button" disabled={components.length <= 1} onClick={() => setComponents((current) => current.filter((_, rowIndex) => rowIndex !== index))} aria-label={`Quitar producto ${index + 1}`} className="grid size-8 place-items-center rounded-lg bg-white text-rose-700 disabled:opacity-40">×</button></div>})}</div><button type="button" onClick={() => setComponents((current) => [...current, { productoId: '', cantidad: 1, tamano: '' }])} className="mt-3 rounded-lg border border-emerald-200 px-3 py-2 text-xs font-semibold text-emerald-800">＋ Agregar producto al combo</button></fieldset><p className="rounded-lg bg-amber-50 p-3 text-xs leading-relaxed text-amber-900">Al vencer la fecha, el combo dejará de aparecer en el chat y ya no se podrá pedir.</p>{(formError || error) && <p role="alert" className="text-sm text-rose-700">{formError || error}</p>}<button disabled={saving} className="w-full rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{saving ? 'Guardando…' : combo ? 'Guardar cambios' : 'Crear combo'}</button></form></section></div>
+}
+
+function CombosView({ combos, products, canEdit, onCreate, onEdit, onToggleActive, onDelete }) {
+  const today = dateKey(new Date())
+  return <section><div className="flex flex-wrap items-end justify-between gap-3"><div><p className="text-sm font-medium text-emerald-800">Promociones</p><h2 className="mt-1 text-2xl font-bold text-slate-900">Combos</h2><p className="mt-1 text-sm text-slate-500">Arma ofertas con productos del inventario y define su fecha límite.</p></div>{canEdit && <button onClick={onCreate} className="rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-emerald-800">＋ Crear combo</button>}</div><div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">{combos.map((combo) => { const expired = combo.vigenciaHasta < today; return <article key={combo.id} className={`rounded-2xl border p-4 ${combo.activo === false || expired ? 'border-slate-300 bg-slate-100' : 'border-emerald-200 bg-white shadow-sm'}`}><div className="flex items-start justify-between gap-3"><div><span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${combo.activo === false || expired ? 'bg-slate-200 text-slate-700' : 'bg-emerald-50 text-emerald-800'}`}>{combo.activo === false ? 'Desactivado' : expired ? 'Promoción vencida' : 'Vigente'}</span><h3 className="mt-2 text-base font-bold text-slate-900">{combo.nombre}</h3></div><strong className="shrink-0 text-lg text-emerald-800">{money.format(Number(combo.precio) || 0)}</strong></div><ul className="mt-3 space-y-1 text-xs text-slate-600">{(combo.componentes || []).map((part, index) => { const product = products.find((item) => item.id === part.productoId); return <li key={`${part.productoId}-${index}`}>{part.cantidad}× {product?.nombre || part.nombre || 'Producto eliminado'}{part.tamano ? ` · ${part.tamano}` : ''}</li>})}</ul><p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">Aceptar pedidos hasta <strong>{combo.vigenciaHasta || 'Sin fecha'}</strong></p>{canEdit && <div className="mt-3 flex flex-wrap gap-3 border-t border-slate-200 pt-3 text-xs font-semibold"><button onClick={() => onEdit(combo)} className="text-emerald-800 hover:underline">Editar</button><button onClick={() => onToggleActive(combo)} className="text-slate-600 hover:underline">{combo.activo === false ? 'Activar' : 'Desactivar'}</button><button onClick={() => onDelete(combo)} className="text-rose-700 hover:underline">Eliminar</button></div>}</article>})}{!combos.length && <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center md:col-span-2 xl:col-span-3"><p className="font-semibold text-slate-800">Aún no hay combos</p><p className="mt-1 text-sm text-slate-500">Crea una promoción seleccionando productos del inventario.</p>{canEdit && <button onClick={onCreate} className="mt-4 rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white">＋ Crear el primer combo</button>}</div>}</div></section>
+}
+
 export default function Dashboard({ companyId, companyName, activeTab, onTabChange, onOpenChat, onChooseStore }) {
   const [orders, setOrders] = useState([])
   const [counterSales, setCounterSales] = useState([])
@@ -337,9 +408,14 @@ export default function Dashboard({ companyId, companyName, activeTab, onTabChan
   const [search, setSearch] = useState('')
   const [darkMode, setDarkMode] = useState(() => window.localStorage.getItem('dashboard-theme') === 'dark')
   const [period, setPeriod] = useState('today')
+  const [historyPeriod, setHistoryPeriod] = useState('today')
+  const [historySource, setHistorySource] = useState('all')
   const [targetDays, setTargetDays] = useState(14)
   const [ticket, setTicket] = useState(null)
   const [createOpen, setCreateOpen] = useState(false)
+  const [comboDialogOpen, setComboDialogOpen] = useState(false)
+  const [editingCombo, setEditingCombo] = useState(null)
+  const [comboSaving, setComboSaving] = useState(false)
   const [editingProduct, setEditingProduct] = useState(null)
   const [creating, setCreating] = useState(false)
   const [toast, setToast] = useState('')
@@ -353,6 +429,8 @@ export default function Dashboard({ companyId, companyName, activeTab, onTabChan
   const [savingClose, setSavingClose] = useState(false)
   const [pdfError, setPdfError] = useState('')
   const [todayKey, setTodayKey] = useState(() => dateKey(new Date()))
+  const [draggingOrderId, setDraggingOrderId] = useState('')
+  const [dropTargetStatus, setDropTargetStatus] = useState('')
   const ordersPausedToday = ordersPausedUntil === todayKey
   const isPizzeria = /pizzer|pizza/i.test(`${companyId || ''} ${companyName || ''}`)
 
@@ -427,14 +505,21 @@ export default function Dashboard({ companyId, companyName, activeTab, onTabChan
     const date = sale.creadoEn?.toDate?.()
     return date && date.toDateString() === now.toDateString()
   })
-  const validatedRevenue = todayOrders.filter((order) => stateOf(order) !== workflow[0]).reduce((sum, order) => sum + (Number(order.total) || 0), 0)
+  const validatedRevenue = orders.filter((order) => {
+    if (stateOf(order) === workflow[0]) return false
+    // Count on the day payment is validated; legacy orders fall back to their creation date.
+    const validatedAt = firestoreDate(order.pagoValidadoEn) || firestoreDate(order.creadoEn)
+    return validatedAt && dateKey(validatedAt) === todayKey
+  }).reduce((sum, order) => sum + (Number(order.total) || 0), 0)
     + todayCounterSales.reduce((sum, sale) => sum + (Number(sale.total) || 0), 0)
-  const lowStock = products.filter((product) => product.modoVenta !== 'bajoPedido' && (Number(product.stock) || 0) <= (Number(product.stockMinimo) || 5))
+  const combos = products.filter((product) => product.tipoProducto === 'combo')
+  const regularProducts = products.filter((product) => product.tipoProducto !== 'combo')
+  const lowStock = regularProducts.filter((product) => product.modoVenta !== 'bajoPedido' && (Number(product.stock) || 0) <= (Number(product.stockMinimo) || 5))
   const deliveredToday = [
     ...orders.filter((order) => stateOf(order) === workflow[3] && deliveryDayKey(order) === todayKey),
     ...todayCounterSales,
   ]
-  const forecastProducts = products.filter((product) => product.modoVenta !== 'bajoPedido')
+  const forecastProducts = regularProducts.filter((product) => product.modoVenta !== 'bajoPedido')
   const forecastByProduct = useMemo(() => {
     const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000
     const sales = new Map()
@@ -470,13 +555,31 @@ export default function Dashboard({ companyId, companyName, activeTab, onTabChan
       return [product.id, { units30: units, salesDays, weeklyUnits, dailyRate, daysLeft, restock, confidence, message: `Pronóstico: ~${daysLeft} días de stock al ritmo de ${dailyRate.toFixed(1)}/día${coverage}`, tone }]
     }))
   }, [orders, counterSales, products, targetDays])
+  const channelSales = useMemo(() => {
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000
+    const online = orders.filter((order) => {
+      const date = firestoreDate(order.pagoValidadoEn) || firestoreDate(order.creadoEn)
+      const status = clean(order.estado || '')
+      return date && date.getTime() >= cutoff && stateOf(order) !== workflow[0] && !status.includes('cancel')
+    })
+    const counter = counterSales.filter((sale) => {
+      const date = firestoreDate(sale.creadoEn)
+      return date && date.getTime() >= cutoff
+    })
+    return {
+      onlineTotal: online.reduce((sum, order) => sum + (Number(order.total) || 0), 0),
+      onlineCount: online.length,
+      counterTotal: counter.reduce((sum, sale) => sum + (Number(sale.total) || 0), 0),
+      counterCount: counter.length,
+    }
+  }, [orders, counterSales])
   const filteredOrders = useMemo(() => {
     const needle = clean(search).replace(/^#\s*/, '')
     const minDate = new Date()
     if (period === 'today') minDate.setHours(0, 0, 0, 0)
     if (period === 'week') minDate.setDate(minDate.getDate() - 7)
-    return orders.filter((order) => {
-      const searchText = clean(`${order.cliente || ''} ${order.id} ${order.id.slice(-6)} ${order.id.slice(-3)} ${order.folio || ''} ${order.numeroPedido || ''}`)
+    return [...orders, ...counterSales].sort((a, b) => (firestoreDate(b.creadoEn)?.getTime() || 0) - (firestoreDate(a.creadoEn)?.getTime() || 0)).filter((order) => {
+      const searchText = clean(`${order.cliente || ''} ${order.id} ${order.id.slice(-6)} ${order.id.slice(-3)} ${orderFolio(order)} ${order.folio || ''} ${order.numeroPedido || ''} ${order.tipo === 'mostrador' ? 'caja mostrador' : 'chat'}`)
       const matchesSearch = !needle || searchText.includes(needle)
       if (!matchesSearch) return false
       if (needle) return true
@@ -484,14 +587,59 @@ export default function Dashboard({ companyId, companyName, activeTab, onTabChan
       const date = order.creadoEn?.toDate?.()
       return date && date >= minDate
     })
-  }, [orders, search, period])
+  }, [orders, counterSales, search, period])
+  const historyOrders = useMemo(() => {
+    const now = new Date()
+    const start = new Date(now)
+    start.setHours(0, 0, 0, 0)
+    if (historyPeriod === 'week') start.setDate(start.getDate() - 6)
+    return [...orders, ...counterSales]
+      .filter((order) => historySource === 'all' || (historySource === 'counter' ? order.tipo === 'mostrador' : order.tipo !== 'mostrador'))
+      .filter((order) => {
+        const searchText = clean(`${order.cliente || ''} ${order.id} ${order.id.slice(-6)} ${order.id.slice(-3)} ${orderFolio(order)} ${order.folio || ''} ${order.numeroPedido || ''} ${order.tipo === 'mostrador' ? 'caja mostrador' : 'chat en linea online'}`)
+        if (search && !searchText.includes(clean(search).replace(/^#\s*/, ''))) return false
+        if (historyPeriod === 'all') return true
+        const date = firestoreDate(order.creadoEn)
+        return date && date >= start
+      })
+      .sort((a, b) => (firestoreDate(b.creadoEn)?.getTime() || 0) - (firestoreDate(a.creadoEn)?.getTime() || 0))
+  }, [orders, counterSales, search, historyPeriod, historySource])
 
   async function changeStatus(order, status) {
+    const wasStatus = order.estado
+    const wasPaidAt = order.pagoValidadoEn
+    const nextPaidAt = status === workflow[0] ? null : (wasPaidAt || new Date())
+    setOrders((current) => current.map((item) => item.id === order.id
+      ? { ...item, estado: status, pagoValidadoEn: nextPaidAt }
+      : item))
     try {
-      await updateDoc(doc(db, 'empresas', companyId, 'pedidos', order.id), { estado: status })
+      await updateDoc(doc(db, 'empresas', companyId, 'pedidos', order.id), {
+        estado: status,
+        pagoValidadoEn: status === workflow[0] ? deleteField() : (wasPaidAt || serverTimestamp()),
+      })
       setToast('Estado del pedido actualizado')
       setTimeout(() => setToast(''), 2200)
-    } catch { setError('No se pudo actualizar el pedido. Revisa las reglas de Firestore.') }
+    } catch {
+      setOrders((current) => current.map((item) => item.id === order.id
+        ? { ...item, estado: wasStatus, pagoValidadoEn: wasPaidAt }
+        : item))
+      setError('No se pudo actualizar el pedido. Revisa las reglas de Firestore.')
+    }
+  }
+
+  function startOrderDrag(event, order) {
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', order.id)
+    setDraggingOrderId(order.id)
+  }
+
+  function dropOrder(event, status) {
+    event.preventDefault()
+    const orderId = event.dataTransfer.getData('text/plain') || draggingOrderId
+    const order = orders.find((item) => item.id === orderId)
+    setDropTargetStatus('')
+    setDraggingOrderId('')
+    if (order && stateOf(order) !== status) changeStatus(order, status)
   }
 
   function openCashClose() {
@@ -634,7 +782,7 @@ export default function Dashboard({ companyId, companyName, activeTab, onTabChan
     setCounterSaleProduct(product)
   }
 
-  async function confirmCounterSale({ quantity, paymentMethod }) {
+  async function confirmCounterSale({ quantity, paymentMethod, personalization = {} }) {
     if (!counterSaleProduct || counterSaleSaving) return
     const product = counterSaleProduct
     setCounterSaleSaving(true)
@@ -648,14 +796,19 @@ export default function Dashboard({ companyId, companyName, activeTab, onTabChan
         const productData = snapshot.data()
         const currentStock = Number(productData.stock) || 0
         if (quantity > currentStock) throw new Error('INSUFFICIENT_STOCK')
-        const unitPrice = Number(productData.precio) || 0
+        const selectedSize = personalization.tamano || productData.preciosPorTamano?.[0]?.nombre
+        const selectedToppings = (productData.opcionesTopping || []).filter((item) => (personalization.toppings || []).includes(item.nombre)).map((item) => item.nombre)
+        const savedPersonalization = productData.preciosPorTamano?.length ? { tamano: selectedSize, toppings: selectedToppings } : undefined
+        const unitPrice = savedPersonalization
+          ? configuredProductPrice(productData, savedPersonalization)
+          : Number(productData.precio) || 0
         if (unitPrice <= 0) throw new Error('INVALID_PRICE')
         const total = unitPrice * quantity
         const sale = {
-          folio: `M-${saleRef.id.slice(-6).toUpperCase()}`,
+          folio: `CAJ-${saleRef.id.slice(-6).toUpperCase()}`,
           tipo: 'mostrador',
           cliente: 'Venta en mostrador',
-          productos: [{ productoId: product.id, nombre: productData.nombre || product.nombre, precio: unitPrice, cantidad: quantity }],
+          productos: [{ productoId: product.id, nombre: productData.nombre || product.nombre, precio: unitPrice, cantidad: quantity, ...(savedPersonalization ? { personalizacion: savedPersonalization } : {}) }],
           total,
           metodoPago: paymentMethod,
           estado: 'Entregado',
@@ -716,6 +869,73 @@ export default function Dashboard({ companyId, companyName, activeTab, onTabChan
     } finally { setCreating(false) }
   }
 
+  async function saveCombo(comboValues) {
+    setComboSaving(true)
+    setError('')
+    try {
+      if (editingCombo) {
+        await updateDoc(doc(db, 'empresas', companyId, 'productos', editingCombo.id), comboValues)
+        setToast('Combo actualizado')
+      } else {
+        const comboRef = doc(collection(db, 'empresas', companyId, 'productos'))
+        await setDoc(comboRef, { ...comboValues, creadoEn: serverTimestamp() })
+        setToast('Combo creado y agregado al chat')
+      }
+      setComboDialogOpen(false)
+      setEditingCombo(null)
+      setTimeout(() => setToast(''), 2400)
+    } catch {
+      setError('No se pudo guardar el combo. Verifica que tu cuenta tenga rol owner y las reglas de Firestore estén publicadas.')
+    } finally { setComboSaving(false) }
+  }
+
+  async function toggleComboActive(combo) {
+    try {
+      await updateDoc(doc(db, 'empresas', companyId, 'productos', combo.id), { activo: combo.activo === false })
+      setToast(combo.activo === false ? 'Combo activado' : 'Combo desactivado')
+      setTimeout(() => setToast(''), 2200)
+    } catch { setError('No se pudo cambiar el estado del combo. Verifica las reglas de Firestore.') }
+  }
+
+  async function removeCombo(combo) {
+    if (!window.confirm(`¿Eliminar el combo “${combo.nombre}”? Los pedidos anteriores conservarán el nombre y precio guardados.`)) return
+    try {
+      await deleteDoc(doc(db, 'empresas', companyId, 'productos', combo.id))
+      setToast('Combo eliminado')
+      setTimeout(() => setToast(''), 2200)
+    } catch { setError('No se pudo eliminar el combo. Verifica las reglas de Firestore.') }
+  }
+
+  async function toggleProductActive(product) {
+    const nextActive = product.activo === false
+    setProducts((items) => items.map((item) => item.id === product.id ? { ...item, activo: nextActive } : item))
+    try {
+      await updateDoc(doc(db, 'empresas', companyId, 'productos', product.id), { activo: nextActive })
+      setToast(nextActive ? 'Producto activado en el catálogo' : 'Producto desactivado del catálogo')
+      setTimeout(() => setToast(''), 2200)
+    } catch {
+      setProducts((items) => items.map((item) => item.id === product.id ? product : item))
+      setError('No se pudo cambiar el estado del producto. Verifica las reglas de Firestore.')
+    }
+  }
+
+  async function removeProduct(product) {
+    const confirmed = window.confirm(`¿Eliminar “${product.nombre}” de forma permanente? Sus pedidos y ventas anteriores conservarán el detalle guardado, pero ya no aparecerá como producto.`)
+    if (!confirmed) return
+    const previous = products
+    setProducts((items) => items.filter((item) => item.id !== product.id))
+    stockValues.current.delete(product.id)
+    try {
+      await deleteDoc(doc(db, 'empresas', companyId, 'productos', product.id))
+      setToast('Producto eliminado')
+      setTimeout(() => setToast(''), 2200)
+    } catch {
+      setProducts(previous)
+      stockValues.current.set(product.id, Number(product.stock) || 0)
+      setError('No se pudo eliminar el producto. Verifica que tu cuenta tenga rol owner y que las reglas estén publicadas.')
+    }
+  }
+
   if (!firebaseConfigured || !companyId) return <main className="mx-auto max-w-2xl px-5 py-12"><h1 className="text-3xl font-bold">Configura Firebase</h1><p className="mt-3 text-sm text-slate-600">Completa Firebase y VITE_COMPANY_ID en .env.local.</p></main>
   if (!authReady) return <main className="px-6 py-16 text-sm text-slate-500">Verificando sesión…</main>
   if (!user) return <Login companyName={companyName} storeColor={storeColor} />
@@ -741,7 +961,7 @@ export default function Dashboard({ companyId, companyName, activeTab, onTabChan
       </header>
 
       <nav className="border-b border-white/20 px-5 lg:px-8" style={{ backgroundColor: storeColor }}><div className="mx-auto flex max-w-[1800px] items-center gap-7 overflow-x-auto">
-        {[['live', 'Operación en vivo'], ['history', 'Historial de pedidos'], ['inventory', 'Inventario']].map(([key, label]) => <button key={key} onClick={() => onTabChange(key)} className={`relative flex h-12 shrink-0 items-center gap-2.5 text-xs font-semibold ${activeTab === key ? 'text-white' : 'text-white/75 hover:text-white'}`}><NavIcon name={key} />{label}{activeTab === key && <i className="absolute inset-x-0 bottom-0 h-[3px] rounded-t bg-white" />}</button>)}
+        {[['live', 'Operación en vivo'], ['history', 'Historial de pedidos'], ['inventory', 'Inventario'], ['combos', 'Combos']].map(([key, label]) => <button key={key} onClick={() => onTabChange(key)} className={`relative flex h-12 shrink-0 items-center gap-2.5 text-xs font-semibold ${activeTab === key ? 'text-white' : 'text-white/75 hover:text-white'}`}><NavIcon name={key} />{label}{activeTab === key && <i className="absolute inset-x-0 bottom-0 h-[3px] rounded-t bg-white" />}</button>)}
         <button onClick={() => onTabChange('forecast')} className={`relative hidden h-12 shrink-0 items-center gap-2 text-xs font-medium lg:flex ${activeTab === 'forecast' ? 'text-white' : 'text-white/75 hover:text-white'}`}><NavIcon name="forecast" />Pronóstico{activeTab === 'forecast' && <i className="absolute inset-x-0 bottom-0 h-[3px] rounded-t bg-white" />}</button>
         <span className="hidden shrink-0 items-center gap-2 py-3 text-xs text-white/80 md:flex"><NavIcon name="calendar" /> <span className="capitalize">{dateText}</span></span>
         <button onClick={onOpenChat} className="shrink-0 py-3 text-[11px] font-medium text-white hover:text-white/80">Abrir chat</button>
@@ -754,17 +974,18 @@ export default function Dashboard({ companyId, companyName, activeTab, onTabChan
         {activeTab === 'live' && <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_280px] 2xl:grid-cols-[minmax(0,1fr)_300px]">
           <section className="min-w-0">
             <WeeklyPlanner orders={orders} />
-            <div className="mb-5 flex flex-wrap items-end justify-between gap-4"><div><div className="flex flex-wrap items-center gap-3"><h2 className="text-2xl font-bold tracking-tight text-slate-900">Tablero de Pedidos en Vivo</h2><span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-medium text-emerald-700">● En vivo</span></div><p className="mt-1.5 text-xs text-slate-500">Cada pedido en su lugar. Todo bajo control.</p></div><div className="flex flex-wrap items-center gap-2"><label className="flex h-10 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600">◷<select value={period} onChange={(event) => setPeriod(event.target.value)} className="bg-transparent outline-none"><option value="today">Todo el día</option><option value="week">Últimos 7 días</option><option value="all">Todo el historial</option></select></label><button onClick={toggleOrdersPaused} disabled={!isOwner} aria-pressed={ordersPausedToday} title={!isOwner ? 'Solo el owner puede cambiar la pausa' : ordersPausedToday ? 'Reanudar pedidos para hoy' : 'Pausar pedidos para hoy'} className={`flex h-10 items-center gap-2 rounded-lg border px-3 text-xs font-semibold shadow-sm transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 disabled:cursor-not-allowed disabled:opacity-50 ${ordersPausedToday ? 'border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100' : 'border-amber-200 bg-amber-50 text-amber-900 hover:bg-amber-100'}`}><svg viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{ordersPausedToday ? <path d="M8 5v14l11-7-11-7Z" fill="currentColor" stroke="none"/> : <><rect x="4" y="4" width="6" height="16" rx="1"/><rect x="14" y="4" width="6" height="16" rx="1"/></>}</svg>{ordersPausedToday ? 'Reanudar pedidos' : 'Pausar pedidos'}</button><button onClick={openCashClose} disabled={!isOwner} title={!isOwner ? 'Solo el owner puede cerrar caja' : 'Preparar el corte de caja de hoy'} style={{ backgroundColor: storeColor }} className="flex h-10 items-center gap-2 rounded-lg px-3 text-xs font-semibold text-white shadow-sm transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50"><svg viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="6" width="18" height="14" rx="2"/><path d="M3 11h18M8 6V4h8v2M8 15h3"/><circle cx="17" cy="15" r="1" fill="currentColor" stroke="none"/></svg>{cashClosures[todayKey] ? 'Ver corte' : 'Cerrar caja'}</button></div></div>
-            <div className="grid gap-2.5 md:grid-cols-2 2xl:grid-cols-4">{columns.map(({ status, orders: columnOrders }) => <section key={status} className="min-w-0 rounded-xl border border-slate-200 bg-[#eef3f8] p-2"><header className="flex items-center justify-between px-1 py-2"><h3 className="flex items-center gap-2 text-[11px] font-semibold text-slate-700"><i className={`size-2 rounded-full ${status === workflow[0] ? 'bg-amber-500' : status === workflow[1] ? 'bg-blue-500' : status === workflow[2] ? 'bg-emerald-500' : 'bg-slate-400'}`} />{status}</h3><span className={`grid size-6 place-items-center rounded-md text-[10px] font-semibold ${status === workflow[0] ? 'bg-amber-100 text-amber-800' : status === workflow[1] ? 'bg-blue-100 text-blue-800' : status === workflow[2] ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'}`}>{columnOrders.length}</span></header><div className="space-y-2">{columnOrders.map((order) => <OrderCard key={order.id} order={order} onStatus={changeStatus} onTicket={setTicket} />)}{columnOrders.length === 0 && <p className="rounded-xl border border-dashed border-slate-300 bg-white/60 px-3 py-6 text-center text-xs text-slate-400">Sin pedidos</p>}</div></section>)}</div>
+            <div className="mb-5 flex flex-wrap items-end justify-between gap-4"><div><div className="flex flex-wrap items-center gap-3"><h2 className="text-2xl font-bold tracking-tight text-slate-900">Tablero de Pedidos en Vivo</h2><span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-medium text-emerald-700">● En vivo</span></div><p className="mt-1.5 text-xs text-slate-500">Arrastra los pedidos entre etapas o cámbialas desde la tarjeta.</p></div><div className="flex flex-wrap items-center gap-2"><label className="flex h-10 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600">◷<select value={period} onChange={(event) => setPeriod(event.target.value)} className="bg-transparent outline-none"><option value="today">Todo el día</option><option value="week">Últimos 7 días</option><option value="all">Todo el historial</option></select></label><button onClick={toggleOrdersPaused} disabled={!isOwner} aria-pressed={ordersPausedToday} title={!isOwner ? 'Solo el owner puede cambiar la pausa' : ordersPausedToday ? 'Reanudar pedidos para hoy' : 'Pausar pedidos para hoy'} className={`flex h-10 items-center gap-2 rounded-lg border px-3 text-xs font-semibold shadow-sm transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 disabled:cursor-not-allowed disabled:opacity-50 ${ordersPausedToday ? 'border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100' : 'border-amber-200 bg-amber-50 text-amber-900 hover:bg-amber-100'}`}><svg viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{ordersPausedToday ? <path d="M8 5v14l11-7-11-7Z" fill="currentColor" stroke="none"/> : <><rect x="4" y="4" width="6" height="16" rx="1"/><rect x="14" y="4" width="6" height="16" rx="1"/></>}</svg>{ordersPausedToday ? 'Reanudar pedidos' : 'Pausar pedidos'}</button><button onClick={openCashClose} disabled={!isOwner} title={!isOwner ? 'Solo el owner puede cerrar caja' : 'Preparar el corte de caja de hoy'} style={{ backgroundColor: storeColor }} className="flex h-10 items-center gap-2 rounded-lg px-3 text-xs font-semibold text-white shadow-sm transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50"><svg viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="6" width="18" height="14" rx="2"/><path d="M3 11h18M8 6V4h8v2M8 15h3"/><circle cx="17" cy="15" r="1" fill="currentColor" stroke="none"/></svg>{cashClosures[todayKey] ? 'Ver corte' : 'Cerrar caja'}</button></div></div>
+            <div className="grid gap-2.5 md:grid-cols-2 2xl:grid-cols-4">{columns.map(({ status, orders: columnOrders }) => <section key={status} onDragOver={(event) => { event.preventDefault(); setDropTargetStatus(status) }} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setDropTargetStatus('') }} onDrop={(event) => dropOrder(event, status)} className={`min-w-0 rounded-xl border p-2 transition-colors ${dropTargetStatus === status ? 'border-emerald-500 bg-emerald-50/80 ring-2 ring-emerald-500/20' : 'border-slate-200 bg-[#eef3f8]'}`}><header className="flex items-center justify-between px-1 py-2"><h3 className="flex items-center gap-2 text-[11px] font-semibold text-slate-700"><i className={`size-2 rounded-full ${status === workflow[0] ? 'bg-amber-500' : status === workflow[1] ? 'bg-blue-500' : status === workflow[2] ? 'bg-emerald-500' : 'bg-slate-400'}`} />{status}</h3><span className={`grid size-6 place-items-center rounded-md text-[10px] font-semibold ${status === workflow[0] ? 'bg-amber-100 text-amber-800' : status === workflow[1] ? 'bg-blue-100 text-blue-800' : status === workflow[2] ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'}`}>{columnOrders.length}</span></header><div className="min-h-12 space-y-2" onDragOver={(event) => event.preventDefault()}>{columnOrders.map((order) => <OrderCard key={order.id} order={order} onStatus={changeStatus} onTicket={setTicket} onDragStart={startOrderDrag} onDragEnd={() => { setDraggingOrderId(''); setDropTargetStatus('') }} />)}{columnOrders.length === 0 && <p className="rounded-xl border border-dashed border-slate-300 bg-white/60 px-3 py-6 text-center text-xs text-slate-400">Suelta aquí para mover a {status.toLocaleLowerCase('es-MX')}</p>}</div></section>)}</div>
           </section>
-          <InventoryPanel products={products} canEdit={isOwner} onChange={changeStock} onCounterSale={recordCounterSale} forecastByProduct={forecastByProduct} onCreate={() => { setError(''); setCreateOpen(true) }} onEdit={(product) => { setError(''); setEditingProduct(product) }} />
+          <InventoryPanel products={regularProducts} canEdit={isOwner} onChange={changeStock} onCounterSale={recordCounterSale} forecastByProduct={forecastByProduct} onToggleActive={toggleProductActive} onDelete={removeProduct} onCreate={() => { setError(''); setCreateOpen(true) }} onEdit={(product) => { setError(''); setEditingProduct(product) }} />
         </div>}
 
-        {activeTab === 'history' && <section><div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-2xl font-bold text-slate-900">Historial de pedidos</h2><p className="mt-1 text-sm text-slate-500">Todos los pedidos de {companyName}.</p></div><span className="text-sm text-slate-500">{filteredOrders.length} resultados</span></div><div className="mt-5 overflow-hidden rounded-2xl border border-slate-200 bg-white"><div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-5 py-3">Orden</th><th className="px-5 py-3">Cliente</th><th className="px-5 py-3">Productos</th><th className="px-5 py-3">Entrega</th><th className="px-5 py-3">Total</th><th className="px-5 py-3">Estado</th><th className="px-5 py-3" /></tr></thead><tbody className="divide-y divide-slate-100">{filteredOrders.map((order) => <tr key={order.id}><td className="px-5 py-4 font-semibold">#{order.id.slice(-6).toUpperCase()}</td><td className="px-5 py-4">{order.cliente || 'Cliente'}</td><td className="max-w-xs truncate px-5 py-4 text-slate-500">{orderItems(order)}</td><td className="px-5 py-4">{timeOf(order.entrega)}</td><td className="px-5 py-4 font-semibold">{orderTotalText(order)}</td><td className="px-5 py-4"><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs">{order.estado}</span></td><td className="px-5 py-4"><button onClick={() => setTicket(order)} className="text-xs font-semibold text-emerald-800">Ver ticket</button></td></tr>)}</tbody></table>{filteredOrders.length === 0 && <p className="p-12 text-center text-sm text-slate-500">No hay pedidos para mostrar.</p>}</div></div></section>}
+        {activeTab === 'history' && <section><div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-2xl font-bold text-slate-900">Historial de pedidos</h2><p className="mt-1 text-sm text-slate-500">Pedidos del chat y ventas registradas en caja de {companyName}.</p></div><span className="text-sm text-slate-500">{historyOrders.length} resultados</span></div><div className="mt-4 flex flex-wrap gap-2"><label className="flex h-10 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600"><NavIcon name="calendar" className="size-4"/><span>Periodo</span><select aria-label="Filtrar por periodo" value={historyPeriod} onChange={(event) => setHistoryPeriod(event.target.value)} className="bg-transparent font-semibold text-slate-700 outline-none"><option value="today">Hoy</option><option value="week">Últimos 7 días</option><option value="all">Todo el historial</option></select></label><label className="flex h-10 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600"><span>Origen</span><select aria-label="Filtrar por origen" value={historySource} onChange={(event) => setHistorySource(event.target.value)} className="bg-transparent font-semibold text-slate-700 outline-none"><option value="all">Todos</option><option value="online">En línea</option><option value="counter">En caja</option></select></label></div><div className="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-white"><div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-5 py-3">Folio</th><th className="px-5 py-3">Cliente</th><th className="px-5 py-3">Productos</th><th className="px-5 py-3">Fecha / entrega</th><th className="px-5 py-3">Total</th><th className="px-5 py-3">Estado</th><th className="px-5 py-3" /></tr></thead><tbody className="divide-y divide-slate-100">{historyOrders.map((order) => <tr key={`${order.tipo || 'pedido'}-${order.id}`}><td className="px-5 py-4"><strong className="font-semibold">#{orderFolio(order)}</strong>{order.tipo === 'mostrador' && <span className="mt-1 block w-fit rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-900">Venta en caja</span>}</td><td className="px-5 py-4">{order.cliente || 'Cliente'}</td><td className="max-w-xs truncate px-5 py-4 text-slate-500">{orderItems(order)}</td><td className="px-5 py-4">{order.tipo === 'mostrador' ? `Caja · ${timeOf(order.creadoEn)}` : timeOf(order.entrega)}</td><td className="px-5 py-4 font-semibold">{orderTotalText(order)}</td><td className="px-5 py-4"><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs">{order.estado}</span></td><td className="px-5 py-4"><button onClick={() => setTicket(order)} className="text-xs font-semibold text-emerald-800">Ver ticket</button></td></tr>)}</tbody></table>{historyOrders.length === 0 && <p className="p-12 text-center text-sm text-slate-500">No hay pedidos ni ventas que coincidan con estos filtros.</p>}</div></div></section>}
 
-        {activeTab === 'inventory' && <section><div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-2xl font-bold text-slate-900">Inventario</h2><p className="mt-1 text-sm text-slate-500">Existencias y estimación según pedidos validados de los últimos 30 días.</p></div>{isOwner && <button onClick={() => { setError(''); setCreateOpen(true) }} className="rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-900">＋ Agregar producto</button>}</div><div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{products.map((product) => <div key={product.id} className="rounded-2xl border border-slate-200 bg-white p-5"><StockItem product={product} canEdit={isOwner} onChange={changeStock} onCounterSale={recordCounterSale} onEdit={setEditingProduct} forecast={forecastByProduct.get(product.id)} /><p className="mt-2 text-xs text-slate-500">{money.format(Number(product.precio) || 0)} por unidad</p></div>)}</div>{products.length === 0 && <p className="mt-5 rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center text-sm text-slate-500">Agrega productos a la subcolección productos de esta empresa.</p>}</section>}
+        {activeTab === 'inventory' && <section><div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-2xl font-bold text-slate-900">Inventario</h2><p className="mt-1 text-sm text-slate-500">Existencias y estimación según pedidos validados de los últimos 30 días.</p></div>{isOwner && <button onClick={() => { setError(''); setCreateOpen(true) }} className="rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-900">＋ Agregar producto</button>}</div><div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{regularProducts.map((product) => <div key={product.id} className="rounded-2xl border border-slate-200 bg-white p-5"><StockItem product={product} canEdit={isOwner} onChange={changeStock} onCounterSale={recordCounterSale} onEdit={setEditingProduct} onToggleActive={toggleProductActive} onDelete={removeProduct} forecast={forecastByProduct.get(product.id)} /><p className="mt-2 text-xs text-slate-500">{productPriceSummary(product)}</p></div>)}</div>{regularProducts.length === 0 && <p className="mt-5 rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center text-sm text-slate-500">Agrega productos a la subcolección productos de esta empresa.</p>}</section>}
 
-        {activeTab === 'forecast' && <ForecastView products={forecastProducts} forecastByProduct={forecastByProduct} targetDays={targetDays} onTargetDaysChange={setTargetDays} />}
+        {activeTab === 'forecast' && <ForecastView products={forecastProducts} forecastByProduct={forecastByProduct} channelSales={channelSales} targetDays={targetDays} onTargetDaysChange={setTargetDays} />}
+        {activeTab === 'combos' && <CombosView combos={combos} products={regularProducts} canEdit={isOwner} onCreate={() => { setError(''); setEditingCombo(null); setComboDialogOpen(true) }} onEdit={(combo) => { setError(''); setEditingCombo(combo); setComboDialogOpen(true) }} onToggleActive={toggleComboActive} onDelete={removeCombo} />}
       </main>
       <footer className="mx-auto flex max-w-[1800px] items-center justify-between px-5 pb-5 text-xs text-slate-500 lg:px-8"><span className="flex items-center gap-2"><i className="size-2 rounded-full bg-emerald-500" />Todos los cambios guardados</span><span className="hidden sm:block">Sincronización en tiempo real · {companyName}</span></footer>
 
@@ -772,7 +993,8 @@ export default function Dashboard({ companyId, companyName, activeTab, onTabChan
       {toast && <div className="fixed bottom-6 left-1/2 z-40 -translate-x-1/2 rounded-full bg-slate-900 px-4 py-2.5 text-xs font-medium text-white shadow-lg">{toast}</div>}
       {activeTab === 'live' && <button onClick={() => setCreateOpen(true)} className="fixed bottom-6 right-6 z-30 rounded-full bg-emerald-700 px-4 py-3 text-sm font-semibold text-white shadow-lg hover:bg-emerald-900 2xl:hidden">＋ Producto</button>}
       {(createOpen || editingProduct) && isOwner && <ProductDialog product={editingProduct} onClose={() => { setCreateOpen(false); setEditingProduct(null); setError('') }} onSave={saveProduct} saving={creating} error={error} isPizzeria={isPizzeria} />}
-      {closeReport && <CashCloseDialog report={closeReport} companyName={companyName} alreadySaved={Boolean(cashClosures[closeReport.dateKey])} saving={savingClose} pdfError={pdfError} onPrint={() => setPdfError(printCashClose(closeReport, companyName) ? '' : 'El navegador bloqueó la ventana de impresión. Permite ventanas emergentes para guardar el corte como PDF.')} onSave={saveCashClose} onClose={() => setCloseReport(null)} />}      {ticket && <div role="presentation" onClick={() => setTicket(null)} className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4"><section role="dialog" aria-modal="true" aria-label="Detalle del pedido" onClick={(event) => event.stopPropagation()} className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl"><div className="flex items-start justify-between"><div><p className="text-xs font-medium text-emerald-700">{companyName}</p><h2 className="mt-1 text-xl font-bold">Pedido #{ticket.id.slice(-6).toUpperCase()}</h2></div><button onClick={() => setTicket(null)} className="grid size-8 place-items-center rounded-full bg-slate-100 text-slate-600">×</button></div><div className="mt-5 space-y-3 text-sm"><p><span className="text-slate-500">Cliente:</span> {ticket.cliente || 'Pedido por chat'}</p><p><span className="text-slate-500">Entrega:</span> {timeOf(ticket.entrega)}</p><div className="border-y border-dashed border-slate-200 py-3"><p className="mb-2 text-slate-500">Productos</p><p>{orderItems(ticket)}</p></div><p className="flex justify-between text-base font-bold"><span>{clean(ticket.estado || '').includes('cotiz') ? 'Precio' : 'Total'}</span><span>{orderTotalText(ticket)}</span></p><p className="text-slate-500">Estado: {ticket.estado || 'Pendiente de pago'}</p></div><button onClick={() => setTicket(null)} className="mt-5 w-full rounded-xl bg-emerald-800 px-4 py-2.5 text-sm font-semibold text-white">Cerrar</button></section></div>}
+      {(comboDialogOpen || editingCombo) && isOwner && <ComboEditor key={editingCombo?.id || 'new-combo'} combo={editingCombo} products={regularProducts} saving={comboSaving} error={error} onClose={() => { if (!comboSaving) { setComboDialogOpen(false); setEditingCombo(null); setError('') } }} onSave={saveCombo} />}
+      {closeReport && <CashCloseDialog report={closeReport} companyName={companyName} alreadySaved={Boolean(cashClosures[closeReport.dateKey])} saving={savingClose} pdfError={pdfError} onPrint={() => setPdfError(printCashClose(closeReport, companyName) ? '' : 'El navegador bloqueó la ventana de impresión. Permite ventanas emergentes para guardar el corte como PDF.')} onSave={saveCashClose} onClose={() => setCloseReport(null)} />}      {ticket && <div role="presentation" onClick={() => setTicket(null)} className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4"><section role="dialog" aria-modal="true" aria-label="Detalle del pedido" onClick={(event) => event.stopPropagation()} className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl"><div className="flex items-start justify-between"><div><p className="text-xs font-medium text-emerald-700">{companyName}{ticket.tipo === 'mostrador' ? ' · Venta en caja' : ''}</p><h2 className="mt-1 text-xl font-bold">#{orderFolio(ticket)}</h2></div><button onClick={() => setTicket(null)} className="grid size-8 place-items-center rounded-full bg-slate-100 text-slate-600">×</button></div><div className="mt-5 space-y-3 text-sm"><p><span className="text-slate-500">Cliente:</span> {ticket.cliente || 'Pedido por chat'}</p><p><span className="text-slate-500">Entrega / registro:</span> {ticket.tipo === 'mostrador' ? timeOf(ticket.creadoEn) : timeOf(ticket.entrega)}</p><div className="border-y border-dashed border-slate-200 py-3"><p className="mb-2 text-slate-500">Productos</p><p>{orderItems(ticket)}</p></div><p className="flex justify-between text-base font-bold"><span>{clean(ticket.estado || '').includes('cotiz') ? 'Precio' : 'Total'}</span><span>{orderTotalText(ticket)}</span></p><p className="text-slate-500">Estado: {ticket.estado || 'Pendiente de pago'}</p></div><button onClick={() => setTicket(null)} className="mt-5 w-full rounded-xl bg-emerald-800 px-4 py-2.5 text-sm font-semibold text-white">Cerrar</button></section></div>}
     </div>
   )
 }
@@ -792,7 +1014,7 @@ function CashCloseDialog({ report, companyName, alreadySaved, saving, pdfError, 
   </section></div>
 }
 
-function ForecastView({ products, forecastByProduct, targetDays, onTargetDaysChange }) {
+function ForecastView({ products, forecastByProduct, channelSales, targetDays, onTargetDaysChange }) {
   const [selectedProductId, setSelectedProductId] = useState('')
   const rows = products.map((product) => ({ product, forecast: forecastByProduct.get(product.id) }))
   const usable = rows.filter(({ forecast }) => forecast?.daysLeft !== null && forecast?.daysLeft !== undefined)
@@ -804,6 +1026,9 @@ function ForecastView({ products, forecastByProduct, targetDays, onTargetDaysCha
   const selectedForecast = selectedProduct ? forecastByProduct.get(selectedProduct.id) : null
   const weeklySales = selectedForecast?.weeklyUnits || [0, 0, 0, 0]
   const maxWeeklySales = Math.max(...weeklySales, 1)
+  const channelTotal = channelSales.onlineTotal + channelSales.counterTotal
+  const onlineShare = channelTotal ? Math.round((channelSales.onlineTotal / channelTotal) * 100) : 0
+  const counterShare = channelTotal ? 100 - onlineShare : 0
 
   useEffect(() => {
     if (!products.some((product) => product.id === selectedProductId) && products[0]) setSelectedProductId(products[0].id)
@@ -817,6 +1042,8 @@ function ForecastView({ products, forecastByProduct, targetDays, onTargetDaysCha
       <MetricCard label="Reposiciones sugeridas" value={replenishment.length} tone="text-amber-700" />
       <MetricCard label="Necesitan más historial" value={insufficient} tone="text-slate-500" />
     </div>
+
+    <section className="mt-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><div><h3 className="font-semibold text-slate-900">¿Dónde vendes más?</h3><p className="mt-1 text-xs text-slate-500">Ingresos registrados en los últimos 30 días, por canal de venta.</p></div><div className="mt-5 flex flex-col items-center gap-6 sm:flex-row sm:justify-center"><div role="img" aria-label={`Distribución de ingresos: ${onlineShare}% pedidos en línea y ${counterShare}% ventas en caja`} className="relative grid size-40 shrink-0 place-items-center rounded-full" style={{ background: channelTotal ? `conic-gradient(#059669 0% ${onlineShare}%, #eab308 ${onlineShare}% 100%)` : '#e2e8f0' }}><div className="grid size-24 place-items-center rounded-full bg-white text-center shadow-inner"><div><strong className="block text-xl text-slate-900">{channelTotal ? `${onlineShare}%` : '—'}</strong><span className="text-[10px] text-slate-500">en línea</span></div></div></div><div className="w-full max-w-sm space-y-3"><div className="flex items-start justify-between gap-4 rounded-xl bg-emerald-50/70 px-4 py-3"><div><p className="flex items-center gap-2 text-xs font-semibold text-slate-800"><i className="size-2.5 rounded-full bg-emerald-600" />Pedidos en línea</p><p className="mt-1 pl-[18px] text-[10px] text-slate-500">{channelSales.onlineCount} pedidos · {onlineShare}% de ingresos</p></div><strong className="shrink-0 text-sm text-emerald-800">{money.format(channelSales.onlineTotal)}</strong></div><div className="flex items-start justify-between gap-4 rounded-xl bg-amber-50/80 px-4 py-3"><div><p className="flex items-center gap-2 text-xs font-semibold text-slate-800"><i className="size-2.5 rounded-full bg-yellow-500" />Ventas en caja</p><p className="mt-1 pl-[18px] text-[10px] text-slate-500">{channelSales.counterCount} ventas · {counterShare}% de ingresos</p></div><strong className="shrink-0 text-sm text-amber-800">{money.format(channelSales.counterTotal)}</strong></div>{!channelTotal && <p className="text-center text-[11px] text-slate-500">Aún no hay ventas registradas en el periodo.</p>}</div></div></section>
 
     <div className="mt-5 grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(300px,.8fr)]">
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -838,7 +1065,7 @@ function MetricCard({ label, value, tone }) {
   return <article className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm"><p className="text-xs font-medium text-slate-500">{label}</p><p className={`mt-2 text-2xl font-bold ${tone}`}>{value}</p></article>
 }
 
-function InventoryPanel({ products, canEdit, onChange, onCounterSale, onCreate, onEdit, forecastByProduct }) {
+function InventoryPanel({ products, canEdit, onChange, onCounterSale, onCreate, onEdit, onToggleActive, onDelete, forecastByProduct }) {
   const alerts = products.filter((product) => product.modoVenta !== 'bajoPedido' && Number(product.stock) <= 5).length
-  return <aside className="rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_1px_2px_rgba(15,23,42,.03)] sm:p-6 xl:sticky xl:top-4 xl:max-h-[calc(100vh-2rem)] xl:overflow-y-auto xl:overscroll-contain"><div className="flex items-start justify-between gap-3"><div><h2 className="text-xl font-bold text-slate-900">Inventario en Vivo</h2><p className="mt-1.5 text-xs text-slate-500">Stock y pronóstico por ventas validadas (30 días).</p><button disabled={!canEdit} onClick={onCreate} className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-100 disabled:hidden">＋ Agregar producto</button></div><span className={`shrink-0 rounded-lg px-2.5 py-1.5 text-[11px] font-semibold ${alerts ? 'bg-amber-50 text-amber-800' : 'bg-emerald-50 text-emerald-700'}`}>⚠ {alerts} alertas</span></div><div className="mt-5 border-t border-slate-200 pt-4">{products.slice(0, 8).map((product) => <StockItem key={product.id} product={product} canEdit={canEdit} onChange={onChange} onCounterSale={onCounterSale} onEdit={onEdit} forecast={forecastByProduct.get(product.id)} />)}{products.length === 0 && <p className="py-8 text-center text-xs text-slate-500">Aún no hay productos en el inventario.</p>}</div>{!canEdit && products.length > 0 && <p className="mt-2 text-[10px] text-slate-400">Solicita el rol owner para ajustar existencias.</p>}</aside>
+  return <aside className="rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_1px_2px_rgba(15,23,42,.03)] sm:p-6 xl:sticky xl:top-4 xl:max-h-[calc(100vh-2rem)] xl:overflow-y-auto xl:overscroll-contain"><div className="flex items-start justify-between gap-3"><div><h2 className="text-xl font-bold text-slate-900">Inventario en Vivo</h2><p className="mt-1.5 text-xs text-slate-500">Stock y pronóstico por ventas validadas (30 días).</p><button disabled={!canEdit} onClick={onCreate} className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-100 disabled:hidden">＋ Agregar producto</button></div><span className={`shrink-0 rounded-lg px-2.5 py-1.5 text-[11px] font-semibold ${alerts ? 'bg-amber-50 text-amber-800' : 'bg-emerald-50 text-emerald-700'}`}>⚠ {alerts} alertas</span></div><div className="mt-5 border-t border-slate-200 pt-4">{products.slice(0, 8).map((product) => <StockItem key={product.id} product={product} canEdit={canEdit} onChange={onChange} onCounterSale={onCounterSale} onEdit={onEdit} onToggleActive={onToggleActive} onDelete={onDelete} forecast={forecastByProduct.get(product.id)} />)}{products.length === 0 && <p className="py-8 text-center text-xs text-slate-500">Aún no hay productos en el inventario.</p>}</div>{!canEdit && products.length > 0 && <p className="mt-2 text-[10px] text-slate-400">Solicita el rol owner para ajustar existencias.</p>}</aside>
 }

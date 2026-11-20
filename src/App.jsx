@@ -6,13 +6,15 @@ import Chat from './Chat.jsx'
 import Dashboard from './Dashboard.jsx'
 
 const defaultCompanyId = import.meta.env.VITE_COMPANY_ID
+// The public chat should open on the bakery by default; a `?tienda=` URL still overrides it.
+const defaultChatCompanyId = 'pasteleria-dulce'
 
 function readRoute() {
   const path = window.location.pathname.replace(/\/+$/, '') || '/chat'
   if (path === '/chat') return { page: 'chat', tab: 'live' }
   if (path === '/dashboard') return { page: 'dashboard', tab: 'select' }
   if (path === '/dashboard/live') return { page: 'dashboard', tab: 'live' }
-  const dashboardTab = path.match(/^\/dashboard\/(history|inventory|forecast)$/)
+  const dashboardTab = path.match(/^\/dashboard\/(history|inventory|forecast|combos)$/)
   if (dashboardTab) return { page: 'dashboard', tab: dashboardTab[1] }
   return { page: 'chat', tab: 'live' }
 }
@@ -20,7 +22,8 @@ function readRoute() {
 function readCompanyId(route) {
   const selected = new URLSearchParams(window.location.search).get('tienda')
   if (selected) return selected
-  return route.page === 'chat' || route.tab !== 'select' ? defaultCompanyId : ''
+  if (route.page === 'chat') return defaultChatCompanyId
+  return route.tab !== 'select' ? defaultCompanyId : ''
 }
 
 function StorePortal({ companies, onSelect }) {
@@ -63,7 +66,7 @@ export default function App() {
     const currentPath = window.location.pathname.replace(/\/+$/, '') || '/chat'
     if (currentPath === '/dashboard/live' && !new URLSearchParams(window.location.search).has('tienda') && defaultCompanyId) {
       window.history.replaceState({}, '', href('/dashboard/live', defaultCompanyId))
-    } else if (currentPath !== '/chat' && currentPath !== '/dashboard' && !/^\/dashboard\/(live|history|inventory|forecast)$/.test(currentPath)) {
+    } else if (currentPath !== '/chat' && currentPath !== '/dashboard' && !/^\/dashboard\/(live|history|inventory|forecast|combos)$/.test(currentPath)) {
       window.history.replaceState({}, '', href('/chat', defaultCompanyId))
       syncFromUrl()
     }
@@ -91,7 +94,7 @@ export default function App() {
         ? <main className="grid min-h-dvh place-items-center p-0 sm:p-8"><div className="h-dvh w-full overflow-hidden bg-white sm:h-[844px] sm:max-h-[calc(100vh-64px)] sm:w-[390px] sm:rounded-[30px] sm:shadow-[0_24px_80px_rgba(31,41,35,.16)]"><Chat companyId={companyId} stores={companies} onSelectStore={(storeId) => navigate('/chat', storeId)} onOpenDashboard={openGeneralPortal} /></div></main>
         : route.tab === 'select'
           ? <StorePortal companies={companies} onSelect={openStoreDashboard} />
-          : <Dashboard companyId={companyId} companyName={companyName} activeTab={route.tab} onTabChange={(tab) => navigate(`/dashboard/${tab}`)} onOpenChat={() => navigate('/chat')} onChooseStore={openGeneralPortal} />}
+          : <Dashboard companyId={companyId} companyName={companyName} activeTab={route.tab} onTabChange={(tab) => navigate(`/dashboard/${tab}`)} onOpenChat={() => navigate('/chat', defaultChatCompanyId)} onChooseStore={openGeneralPortal} />}
     </div>
   )
 }
