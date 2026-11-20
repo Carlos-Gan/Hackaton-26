@@ -36,8 +36,11 @@ function printCashClose(report, companyName) {
 }
 
 function storeThemeVars(color) {
+  const channels = color.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i)?.slice(1).map((value) => parseInt(value, 16) / 255) || [0.03, 0.49, 0.38]
+  const luminance = channels.map((channel) => channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4).reduce((sum, channel, index) => sum + channel * [0.2126, 0.7152, 0.0722][index], 0)
   return {
     '--store-color': color,
+    '--store-color-foreground': luminance > 0.179 ? '#111827' : '#ffffff',
     '--color-emerald-50': `color-mix(in srgb, ${color} 6%, white)`,
     '--color-emerald-100': `color-mix(in srgb, ${color} 12%, white)`,
     '--color-emerald-200': `color-mix(in srgb, ${color} 22%, white)`,
@@ -217,7 +220,7 @@ function StockItem({ product, canEdit, onChange, onEdit, onCounterSale, forecast
     {!madeToOrder && <>
       <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100"><div className={'h-full rounded-full ' + alert.bar} style={{ width: percentage + '%' }} /></div>
       <p className="mt-1.5 text-[10px] text-slate-500">{stock} {product.unidad || 'pzas'} disponibles</p>
-      {canEdit && <button disabled={stock <= 0} onClick={() => onCounterSale(product)} className="mt-3 flex min-h-10 w-full items-center justify-center gap-2 rounded-lg bg-emerald-700 px-3 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-emerald-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500 disabled:shadow-none">
+      {canEdit && <button disabled={stock <= 0} onClick={() => onCounterSale(product)} className="counter-sale-button mt-3 flex min-h-10 w-full items-center justify-center gap-2 rounded-lg bg-emerald-700 px-3 py-2 text-xs font-bold text-[var(--store-color-foreground)] shadow-sm transition hover:bg-emerald-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-700 disabled:shadow-none">
         <svg viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="6" width="18" height="14" rx="2"/><path d="M7 6V4h10v2M3 11h18M8 15h3"/><circle cx="17" cy="15" r="1" fill="currentColor" stroke="none"/></svg>
         {stock > 0 ? 'Registrar venta en mostrador' : 'Sin existencias para vender'}
       </button>}
@@ -263,6 +266,63 @@ function ProductDialog({ product, onClose, onSave, saving, error, isPizzeria }) 
   }
   return <div role="presentation" onClick={onClose} className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4"><section role="dialog" aria-modal="true" aria-label={editing ? 'Editar producto' : 'Agregar producto'} onClick={(event) => event.stopPropagation()} className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl"><div className="flex items-start justify-between"><div><h2 className="text-xl font-bold text-slate-900">{editing ? 'Editar producto' : 'Nuevo producto'}</h2><p className="mt-1 text-sm text-slate-500">Configura el catalogo y su forma de venta.</p></div><button type="button" onClick={onClose} className="grid size-8 place-items-center rounded-full bg-slate-100 text-slate-600">?</button></div><form onSubmit={submit} className="mt-5 space-y-4"><label className="block text-sm font-medium text-slate-700">Nombre<input required maxLength={80} value={name} onChange={(event) => setName(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm" /></label><label className="block text-sm font-medium text-slate-700">Precio base (MXN)<input required type="number" min="0.01" step="0.01" value={price} onChange={(event) => setPrice(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm" /></label>{isPizzeria && <label className="block text-sm font-medium text-slate-700">Tamaño<select required value={size} onChange={(event) => setSize(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm"><option value="">Selecciona un tamaño</option><option value="Chica">Chica</option><option value="Mediana">Mediana</option><option value="Grande">Grande</option></select></label>}<label className="block text-sm font-medium text-slate-700">Modalidad<select value={mode} onChange={(event) => setMode(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm"><option value="inventario">Producto con stock disponible</option><option value="bajoPedido">Preparar bajo pedido</option></select></label>{mode === 'bajoPedido' ? <label className="block text-sm font-medium text-slate-700">Anticipacion minima (dias)<input required type="number" min="1" max="60" value={leadDays} onChange={(event) => setLeadDays(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm" /><span className="mt-1 block text-xs font-normal text-slate-500">Los clientes podran elegir entrega a partir de ese plazo.</span></label> : <>{!editing && <label className="block text-sm font-medium text-slate-700">Existencias<input required type="number" min="0" step="1" value={stock} onChange={(event) => setStock(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm" /></label>}<label className="block text-sm font-medium text-slate-700">Unidad<select value={unit} onChange={(event) => setUnit(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm"><option value="pzas">Piezas</option><option value="docenas">Docenas</option><option value="kg">Kilogramos</option><option value="litros">Litros</option></select></label><label className="block text-sm font-medium text-slate-700">Stock mínimo para alerta<input required type="number" min="1" step="1" value={minimumStock} onChange={(event) => setMinimumStock(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm" /><span className="mt-1 block text-xs font-normal text-slate-500">Se incluirá en el corte de caja cuando el stock llegue a este valor.</span></label></>}{isPizzeria && <label className="block text-sm font-medium text-slate-700">Tamaño (opcional)<input type="text" value={size} onChange={(event) => setSize(event.target.value)} className="mt-1.5 block w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm" /></label>}{(formError || error) && <p role="alert" className="text-sm text-rose-700">{formError || error}</p>}<button disabled={saving} className="w-full rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{saving ? 'Guardando...' : editing ? 'Guardar cambios' : 'Guardar producto'}</button></form></section></div>
 }
+
+function CounterSaleDialog({ product, onClose, onConfirm, saving, error }) {
+  const [quantity, setQuantity] = useState('1')
+  const [paymentMethod, setPaymentMethod] = useState('Efectivo')
+  const stock = Number(product.stock) || 0
+  const price = Number(product.precio) || 0
+  const total = price * (Number(quantity) || 0)
+  const paymentOptions = [
+    { value: 'Efectivo', label: 'Efectivo', detail: 'Pago en caja', icon: '$' },
+    { value: 'Transferencia', label: 'Transferencia', detail: 'Pago recibido', icon: '↗' },
+    { value: 'Tarjeta', label: 'Tarjeta', detail: 'Pago en terminal', icon: '▭' },
+  ]
+
+  function submit(event) {
+    event.preventDefault()
+    const amount = Number(quantity)
+    if (!Number.isInteger(amount) || amount < 1 || amount > stock) return
+    onConfirm({ quantity: amount, paymentMethod })
+  }
+
+  return <div role="presentation" onClick={saving ? undefined : onClose} onKeyDown={(event) => { if (event.key === 'Escape' && !saving) onClose() }} className="fixed inset-0 z-[70] grid place-items-center bg-slate-950/55 p-4 backdrop-blur-[2px]">
+    <section role="alertdialog" aria-modal="true" aria-labelledby="counter-sale-title" aria-describedby="counter-sale-description" onClick={(event) => event.stopPropagation()} className="w-full max-w-md overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+      <form onSubmit={submit}>
+        <header className="border-b border-slate-100 px-5 pb-4 pt-5 sm:px-6">
+          <div className="flex items-start justify-between gap-4">
+            <div><p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">Venta en mostrador</p><h2 id="counter-sale-title" className="mt-1 text-xl font-bold text-slate-900">{product.nombre}</h2><p id="counter-sale-description" className="mt-1 text-sm text-slate-500">Registra la cantidad y cómo pagó el cliente.</p></div>
+            <button type="button" onClick={onClose} disabled={saving} aria-label="Cancelar venta" className="grid size-9 shrink-0 place-items-center rounded-full bg-slate-100 text-lg text-slate-600 transition hover:bg-slate-200 disabled:opacity-50">×</button>
+          </div>
+          <div className="mt-4 flex items-center justify-between rounded-xl bg-slate-50 px-3.5 py-3"><span className="text-xs text-slate-500">Precio · stock disponible</span><strong className="text-sm text-slate-800">{money.format(price)} · {stock} {product.unidad || 'pzas'}</strong></div>
+        </header>
+        <div className="space-y-5 px-5 py-5 sm:px-6">
+          <label className="block text-sm font-semibold text-slate-800">Cantidad<input autoFocus required type="number" inputMode="numeric" min="1" max={stock} step="1" value={quantity} onChange={(event) => setQuantity(event.target.value)} aria-describedby="counter-sale-stock" className="mt-2 h-12 w-full rounded-xl border border-slate-200 px-3.5 text-base font-semibold text-slate-900 outline-none transition focus:border-emerald-600 focus:ring-4 focus:ring-emerald-600/10" /><span id="counter-sale-stock" className="mt-1.5 block text-xs font-normal text-slate-500">Máximo disponible: {stock} {product.unidad || 'pzas'}.</span></label>
+          <fieldset>
+            <legend className="mb-2.5 text-sm font-semibold text-slate-800">Método de pago</legend>
+            <div role="radiogroup" aria-label="Método de pago" className="grid grid-cols-3 gap-2">
+              {paymentOptions.map((option) => {
+                const selected = paymentMethod === option.value
+                return <label key={option.value} className={`relative flex min-h-[86px] cursor-pointer flex-col justify-between rounded-xl border p-3 transition ${selected ? 'border-emerald-600 bg-emerald-50 ring-2 ring-emerald-600/10' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'}`}>
+                  <input type="radio" name="counter-sale-payment" value={option.value} checked={selected} onChange={() => setPaymentMethod(option.value)} className="sr-only" />
+                  <span className="flex items-center justify-between"><span className={`grid size-7 place-items-center rounded-lg text-sm font-bold ${selected ? 'bg-emerald-700 text-white' : 'bg-slate-100 text-slate-600'}`}>{option.icon}</span><span className={`grid size-4 place-items-center rounded-full border ${selected ? 'border-emerald-700' : 'border-slate-300'}`} aria-hidden="true">{selected && <span className="size-2 rounded-full bg-emerald-700" />}</span></span>
+                  <span><span className="block text-xs font-semibold text-slate-800">{option.label}</span><span className="mt-0.5 block text-[10px] text-slate-500">{option.detail}</span></span>
+                </label>
+              })}
+            </div>
+          </fieldset>
+          <div className="flex items-center justify-between rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3"><span className="text-sm font-medium text-emerald-900">Total de la venta</span><strong className="text-lg font-bold text-emerald-800">{money.format(total)} MXN</strong></div>
+          {error && <p role="alert" className="rounded-lg bg-rose-50 px-3 py-2.5 text-xs leading-relaxed text-rose-800">{error}</p>}
+        </div>
+        <footer className="flex flex-col-reverse gap-2 border-t border-slate-100 bg-slate-50/70 px-5 py-4 sm:flex-row sm:justify-end sm:px-6">
+          <button type="button" onClick={onClose} disabled={saving} className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 disabled:opacity-50">Cancelar</button>
+          <button type="submit" disabled={saving || stock < 1 || !Number.isInteger(Number(quantity)) || Number(quantity) < 1 || Number(quantity) > stock || price <= 0} className="rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-[var(--store-color-foreground)] shadow-sm transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50">{saving ? 'Registrando venta…' : 'Confirmar venta'}</button>
+        </footer>
+      </form>
+    </section>
+  </div>
+}
+
 export default function Dashboard({ companyId, companyName, activeTab, onTabChange, onOpenChat, onChooseStore }) {
   const [orders, setOrders] = useState([])
   const [counterSales, setCounterSales] = useState([])
@@ -283,6 +343,9 @@ export default function Dashboard({ companyId, companyName, activeTab, onTabChan
   const [editingProduct, setEditingProduct] = useState(null)
   const [creating, setCreating] = useState(false)
   const [toast, setToast] = useState('')
+  const [counterSaleProduct, setCounterSaleProduct] = useState(null)
+  const [counterSaleSaving, setCounterSaleSaving] = useState(false)
+  const [counterSaleError, setCounterSaleError] = useState('')
   const [storeColor, setStoreColor] = useState(defaultStoreColor)
   const [ordersPausedUntil, setOrdersPausedUntil] = useState('')
   const [cashClosures, setCashClosures] = useState({})
@@ -567,21 +630,15 @@ export default function Dashboard({ companyId, companyName, activeTab, onTabChan
   }
 
   async function recordCounterSale(product) {
-    const rawQuantity = window.prompt(`¿Cuántas unidades de ${product.nombre} vendiste en mostrador?`, '1')
-    if (rawQuantity === null) return
-    const quantity = Number(rawQuantity)
-    if (!Number.isInteger(quantity) || quantity < 1) {
-      setError('Escribe una cantidad entera mayor que cero para registrar la venta.')
-      return
-    }
-    const rawMethod = window.prompt('Método de pago (Efectivo, Transferencia o Tarjeta):', 'Efectivo')
-    if (rawMethod === null) return
-    const paymentMethod = ['Efectivo', 'Transferencia', 'Tarjeta'].find((method) => clean(method) === clean(rawMethod.trim()))
-    if (!paymentMethod) {
-      setError('Elige Efectivo, Transferencia o Tarjeta para incluir la venta en el desglose del corte.')
-      return
-    }
-    setError('')
+    setCounterSaleError('')
+    setCounterSaleProduct(product)
+  }
+
+  async function confirmCounterSale({ quantity, paymentMethod }) {
+    if (!counterSaleProduct || counterSaleSaving) return
+    const product = counterSaleProduct
+    setCounterSaleSaving(true)
+    setCounterSaleError('')
     try {
       const saleRef = doc(collection(db, 'empresas', companyId, 'ventasMostrador'))
       const savedSale = await runTransaction(db, async (transaction) => {
@@ -611,14 +668,17 @@ export default function Dashboard({ companyId, companyName, activeTab, onTabChan
         return { ...sale, creadoEn: new Date() }
       })
       setCounterSales((current) => [{ ...savedSale, id: saleRef.id }, ...current.filter((sale) => sale.id !== saleRef.id)])
+      setCounterSaleProduct(null)
       setToast(`Venta en mostrador registrada: ${quantity} ${product.unidad || 'pzas'} de ${product.nombre}`)
       setTimeout(() => setToast(''), 2600)
     } catch (saleError) {
-      setError(saleError.message === 'INSUFFICIENT_STOCK'
+      setCounterSaleError(saleError.message === 'INSUFFICIENT_STOCK'
         ? `No hay suficiente stock de ${product.nombre}; se actualizó el catálogo con las existencias disponibles.`
         : saleError.message === 'INVALID_PRICE'
           ? `No se registró la venta porque ${product.nombre} no tiene un precio válido.`
           : 'No se pudo registrar la venta y su pago. Verifica tu conexión, tu rol owner y las reglas de Firestore para ventasMostrador.')
+    } finally {
+      setCounterSaleSaving(false)
     }
   }
 
@@ -708,6 +768,7 @@ export default function Dashboard({ companyId, companyName, activeTab, onTabChan
       </main>
       <footer className="mx-auto flex max-w-[1800px] items-center justify-between px-5 pb-5 text-xs text-slate-500 lg:px-8"><span className="flex items-center gap-2"><i className="size-2 rounded-full bg-emerald-500" />Todos los cambios guardados</span><span className="hidden sm:block">Sincronización en tiempo real · {companyName}</span></footer>
 
+      {counterSaleProduct && <CounterSaleDialog product={counterSaleProduct} onClose={() => { if (!counterSaleSaving) { setCounterSaleProduct(null); setCounterSaleError('') } }} onConfirm={confirmCounterSale} saving={counterSaleSaving} error={counterSaleError} />}
       {toast && <div className="fixed bottom-6 left-1/2 z-40 -translate-x-1/2 rounded-full bg-slate-900 px-4 py-2.5 text-xs font-medium text-white shadow-lg">{toast}</div>}
       {activeTab === 'live' && <button onClick={() => setCreateOpen(true)} className="fixed bottom-6 right-6 z-30 rounded-full bg-emerald-700 px-4 py-3 text-sm font-semibold text-white shadow-lg hover:bg-emerald-900 2xl:hidden">＋ Producto</button>}
       {(createOpen || editingProduct) && isOwner && <ProductDialog product={editingProduct} onClose={() => { setCreateOpen(false); setEditingProduct(null); setError('') }} onSave={saveProduct} saving={creating} error={error} isPizzeria={isPizzeria} />}
