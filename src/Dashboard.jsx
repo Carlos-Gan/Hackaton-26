@@ -16,7 +16,7 @@ function printCashClose(report, companyName) {
   if (!printWindow) return false
   const orderRows = report.deliveredOrders.length
     ? report.deliveredOrders.map((order) => `<tr><td>#${escapeHtml(order.folio)}</td><td>${escapeHtml(order.hora)}</td><td>${escapeHtml(order.cliente)}</td><td>${escapeHtml(order.productos)}</td><td>${escapeHtml(order.metodoPago)}</td><td>${escapeHtml(money.format(order.total))}</td></tr>`).join('')
-    : '<tr><td colspan="6">No hay pedidos entregados hoy.</td></tr>'
+    : '<tr><td colspan="6">No hay pedidos ni ventas de mostrador hoy.</td></tr>'
   const paymentsRows = report.paymentBreakdown.length
     ? report.paymentBreakdown.map((item) => `<tr><td>${escapeHtml(item.metodo)}</td><td>${item.cantidad}</td><td>${escapeHtml(money.format(item.total))}</td></tr>`).join('')
     : '<tr><td colspan="3">No hay método de pago registrado.</td></tr>'
@@ -28,7 +28,7 @@ function printCashClose(report, companyName) {
     ? `${escapeHtml(report.topProduct.nombre)} · ${report.topProduct.cantidad} unidades`
     : 'Sin productos vendidos en pedidos entregados.'
   printWindow.document.open()
-  printWindow.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Corte de caja - ${escapeHtml(companyName)}</title><style>body{font:13px Arial,sans-serif;color:#172033;margin:32px;max-width:1000px}h1{margin:0 0 6px;font-size:25px}.muted{color:#64748b}.summary{display:flex;gap:12px;margin:20px 0}.card{flex:1;padding:14px;border:1px solid #dbe3ec;border-radius:10px}.label{font-size:11px;color:#64748b}.value{display:block;margin-top:7px;font-weight:bold;font-size:20px}h2{font-size:16px;margin:22px 0 8px}table{border-collapse:collapse;width:100%;font-size:11px}th,td{text-align:left;border-bottom:1px solid #dbe3ec;padding:7px 6px;vertical-align:top}th{background:#f1f5f9}.note{margin-top:18px;padding:11px;background:#f8fafc;border-radius:8px;color:#475569;font-size:11px}@media print{@page{size:landscape;margin:12mm}body{margin:0}tr{break-inside:avoid}h2{break-after:avoid}}</style></head><body><h1>Corte de caja del día</h1><div class="muted">${escapeHtml(companyName)} · ${escapeHtml(report.dateLabel)} · Folio ${escapeHtml(report.folio)}</div><div class="muted">Responsable: ${escapeHtml(report.responsable)} · Cierre generado: ${escapeHtml(report.closedAt)}</div><div class="summary"><div class="card"><span class="label">Venta de pedidos entregados</span><strong class="value">${escapeHtml(money.format(report.total))} MXN</strong></div><div class="card"><span class="label">Ticket promedio</span><strong class="value">${escapeHtml(money.format(report.ticketAverage))} MXN</strong></div><div class="card"><span class="label">Pedidos · unidades</span><strong class="value">${report.orderCount} · ${report.unitsSold}</strong></div></div><p>Comparación: ayer ${escapeHtml(money.format(report.yesterdayTotal))} · últimos 7 días previos ${escapeHtml(money.format(report.previousWeekTotal))}</p><h2>Producto estrella</h2><p>${topProduct}</p><h2>Desglose por método de pago registrado</h2><table><thead><tr><th>Método</th><th>Pedidos</th><th>Total</th></tr></thead><tbody>${paymentsRows}</tbody></table><h2>Detalle de pedidos entregados</h2><table><thead><tr><th>Folio</th><th>Hora de registro</th><th>Cliente</th><th>Productos</th><th>Método registrado</th><th>Importe</th></tr></thead><tbody>${orderRows}</tbody></table><h2>Pedidos por cobrar o entregar hoy y mañana</h2><table><thead><tr><th>Entrega</th><th>Folio</th><th>Cliente</th><th>Productos</th><th>Estado</th><th>Total</th><th>Anticipo registrado</th><th>Saldo estimado</th></tr></thead><tbody>${upcomingRows || '<tr><td colspan="8">No hay pedidos activos o cancelados para hoy y mañana.</td></tr>'}</tbody></table><h2>Reposición considerando mañana</h2><table><thead><tr><th>Producto</th><th>Stock</th><th>Pedido mañana</th><th>Disponible ajustado</th><th>Mínimo</th><th>Surtir</th></tr></thead><tbody>${replenishmentRows}</tbody></table><p class="note">No se registran métodos de pago para la mayoría de los pedidos; efectivo contado, fondo inicial, gastos/retiros, propinas, fecha de cobro de anticipos/abonos, descuentos, devoluciones, mermas e impuestos tampoco están disponibles. Las ventas en mostrador solo descuentan stock y no se guardan como transacciones, por eso no entran al corte. Los pedidos creados por el chat ya descuentan inventario al reservar; para no contarlos dos veces, solo se restan pedidos sin reserva identificada. La reposición usa productos de inventario, no consumo de ingredientes por receta.</p></body></html>`)
+  printWindow.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Corte de caja - ${escapeHtml(companyName)}</title><style>body{font:13px Arial,sans-serif;color:#172033;margin:32px;max-width:1000px}h1{margin:0 0 6px;font-size:25px}.muted{color:#64748b}.summary{display:flex;gap:12px;margin:20px 0}.card{flex:1;padding:14px;border:1px solid #dbe3ec;border-radius:10px}.label{font-size:11px;color:#64748b}.value{display:block;margin-top:7px;font-weight:bold;font-size:20px}h2{font-size:16px;margin:22px 0 8px}table{border-collapse:collapse;width:100%;font-size:11px}th,td{text-align:left;border-bottom:1px solid #dbe3ec;padding:7px 6px;vertical-align:top}th{background:#f1f5f9}.note{margin-top:18px;padding:11px;background:#f8fafc;border-radius:8px;color:#475569;font-size:11px}@media print{@page{size:landscape;margin:12mm}body{margin:0}tr{break-inside:avoid}h2{break-after:avoid}}</style></head><body><h1>Corte de caja del día</h1><div class="muted">${escapeHtml(companyName)} · ${escapeHtml(report.dateLabel)} · Folio ${escapeHtml(report.folio)}</div><div class="muted">Responsable: ${escapeHtml(report.responsable)} · Cierre generado: ${escapeHtml(report.closedAt)}</div><div class="summary"><div class="card"><span class="label">Ingresos de pedidos entregados y ventas de mostrador</span><strong class="value">${escapeHtml(money.format(report.total))} MXN</strong></div><div class="card"><span class="label">Ticket promedio</span><strong class="value">${escapeHtml(money.format(report.ticketAverage))} MXN</strong></div><div class="card"><span class="label">Operaciones · unidades</span><strong class="value">${report.orderCount} · ${report.unitsSold}</strong></div></div><p>Comparación: ayer ${escapeHtml(money.format(report.yesterdayTotal))} · últimos 7 días previos ${escapeHtml(money.format(report.previousWeekTotal))}</p><h2>Producto estrella</h2><p>${topProduct}</p><h2>Desglose por método de pago registrado</h2><table><thead><tr><th>Método</th><th>Operaciones</th><th>Total</th></tr></thead><tbody>${paymentsRows}</tbody></table><h2>Pedidos entregados y ventas en mostrador</h2><table><thead><tr><th>Folio</th><th>Hora de registro</th><th>Cliente</th><th>Productos</th><th>Método registrado</th><th>Importe</th></tr></thead><tbody>${orderRows}</tbody></table><h2>Pedidos por cobrar o entregar hoy y mañana</h2><table><thead><tr><th>Entrega</th><th>Folio</th><th>Cliente</th><th>Productos</th><th>Estado</th><th>Total</th><th>Anticipo registrado</th><th>Saldo estimado</th></tr></thead><tbody>${upcomingRows || '<tr><td colspan="8">No hay pedidos activos o cancelados para hoy y mañana.</td></tr>'}</tbody></table><h2>Reposición considerando mañana</h2><table><thead><tr><th>Producto</th><th>Stock</th><th>Pedido mañana</th><th>Disponible ajustado</th><th>Mínimo</th><th>Surtir</th></tr></thead><tbody>${replenishmentRows}</tbody></table><p class="note">El corte incluye pedidos entregados y ventas en mostrador registradas hoy. No se registran efectivo contado, fondo inicial, gastos/retiros, propinas, fecha de cobro de anticipos/abonos, descuentos, devoluciones, mermas ni impuestos. El método de pago se incluye cuando se registra. Los pedidos del chat ya descuentan inventario al reservar; para no contarlos dos veces, solo se restan pedidos sin reserva identificada. La reposición usa productos de inventario, no consumo de ingredientes por receta.</p></body></html>`)
   printWindow.document.close()
   printWindow.focus()
   window.setTimeout(() => printWindow.print(), 300)
@@ -265,6 +265,7 @@ function ProductDialog({ product, onClose, onSave, saving, error, isPizzeria }) 
 }
 export default function Dashboard({ companyId, companyName, activeTab, onTabChange, onOpenChat, onChooseStore }) {
   const [orders, setOrders] = useState([])
+  const [counterSales, setCounterSales] = useState([])
   const [products, setProducts] = useState([])
   const stockValues = useRef(new Map())
   const [user, setUser] = useState(null)
@@ -306,6 +307,7 @@ export default function Dashboard({ companyId, companyName, activeTab, onTabChan
     setIsMember(false)
     setIsOwner(false)
     setOrders([])
+    setCounterSales([])
     setProducts([])
     setOrdersPausedUntil('')
     setCashClosures({})
@@ -330,12 +332,15 @@ export default function Dashboard({ companyId, companyName, activeTab, onTabChan
       setOrders(snapshot.docs.map((item) => ({ id: item.id, ...item.data() })))
       setError('')
     }, () => setError('No se pudieron cargar los pedidos. Revisa las reglas de Firestore.'))
+    const stopCounterSales = onSnapshot(query(collection(db, ...base, 'ventasMostrador'), orderBy('creadoEn', 'desc')), (snapshot) => {
+      setCounterSales(snapshot.docs.map((item) => ({ id: item.id, ...item.data(), tipo: 'mostrador' })))
+    }, (firestoreError) => setError(`No se pudieron cargar las ventas de mostrador (${firestoreError.code || 'error'}). Revisa las reglas de Firestore para ventasMostrador.`))
     const stopProducts = onSnapshot(collection(db, ...base, 'productos'), (snapshot) => {
       const nextProducts = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }))
       nextProducts.forEach((item) => stockValues.current.set(item.id, Number(item.stock) || 0))
       setProducts(nextProducts)
     }, (firestoreError) => setError(`No se pudo cargar el inventario (${firestoreError.code || 'error'}). Revisa la regla de lectura de productos.`))
-    return () => { stopOrders(); stopProducts() }
+    return () => { stopOrders(); stopCounterSales(); stopProducts() }
   }, [isMember, companyId])
 
   useEffect(() => {
@@ -355,14 +360,22 @@ export default function Dashboard({ companyId, companyName, activeTab, onTabChan
     const date = order.creadoEn?.toDate?.()
     return date && date.toDateString() === now.toDateString()
   })
+  const todayCounterSales = counterSales.filter((sale) => {
+    const date = sale.creadoEn?.toDate?.()
+    return date && date.toDateString() === now.toDateString()
+  })
   const validatedRevenue = todayOrders.filter((order) => stateOf(order) !== workflow[0]).reduce((sum, order) => sum + (Number(order.total) || 0), 0)
+    + todayCounterSales.reduce((sum, sale) => sum + (Number(sale.total) || 0), 0)
   const lowStock = products.filter((product) => product.modoVenta !== 'bajoPedido' && (Number(product.stock) || 0) <= (Number(product.stockMinimo) || 5))
-  const deliveredToday = orders.filter((order) => stateOf(order) === workflow[3] && deliveryDayKey(order) === todayKey)
+  const deliveredToday = [
+    ...orders.filter((order) => stateOf(order) === workflow[3] && deliveryDayKey(order) === todayKey),
+    ...todayCounterSales,
+  ]
   const forecastProducts = products.filter((product) => product.modoVenta !== 'bajoPedido')
   const forecastByProduct = useMemo(() => {
     const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000
     const sales = new Map()
-    for (const order of orders) {
+    for (const order of [...orders, ...counterSales]) {
       const date = order.creadoEn?.toDate?.()
       if (!date || date.getTime() < cutoff || stateOf(order) === workflow[0] || clean(order.estado || '').includes('cancel')) continue
       for (const item of order.productos || []) {
@@ -393,7 +406,7 @@ export default function Dashboard({ companyId, companyName, activeTab, onTabChan
       const confidence = salesDays >= 10 ? 'Estable' : 'Moderada'
       return [product.id, { units30: units, salesDays, weeklyUnits, dailyRate, daysLeft, restock, confidence, message: `Pronóstico: ~${daysLeft} días de stock al ritmo de ${dailyRate.toFixed(1)}/día${coverage}`, tone }]
     }))
-  }, [orders, products, targetDays])
+  }, [orders, counterSales, products, targetDays])
   const filteredOrders = useMemo(() => {
     const needle = clean(search).replace(/^#\s*/, '')
     const minDate = new Date()
@@ -476,7 +489,10 @@ export default function Dashboard({ companyId, companyName, activeTab, onTabChan
       return { nombre: product.nombre, stockActual, pedidosManana: scheduled.total, disponibleTrasPedidos: availableAfterOrders, minimo: minimum, reponer: Math.max(minimum - availableAfterOrders, 0), unidad: product.unidad || 'pzas' }
     }).filter((item) => item.disponibleTrasPedidos <= item.minimo)
     const revenueFor = (startKey, endKey) => deliveredOrdersForKeys(startKey, endKey).reduce((sum, order) => sum + (Number(order.total) || 0), 0)
-    const deliveredOrdersForKeys = (startKey, endKey) => orders.filter((order) => stateOf(order) === workflow[3] && deliveryDayKey(order) >= startKey && deliveryDayKey(order) <= endKey)
+    const deliveredOrdersForKeys = (startKey, endKey) => [
+      ...orders.filter((order) => stateOf(order) === workflow[3] && deliveryDayKey(order) >= startKey && deliveryDayKey(order) <= endKey),
+      ...counterSales.filter((sale) => deliveryDayKey(sale) >= startKey && deliveryDayKey(sale) <= endKey),
+    ]
     const previousWeekTotal = revenueFor(previousWeekKey, yesterdayKey)
     const yesterdayTotal = revenueFor(yesterdayKey, yesterdayKey)
     const dateLabel = new Intl.DateTimeFormat('es-MX', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(now)
@@ -558,22 +574,51 @@ export default function Dashboard({ companyId, companyName, activeTab, onTabChan
       setError('Escribe una cantidad entera mayor que cero para registrar la venta.')
       return
     }
+    const rawMethod = window.prompt('Método de pago (Efectivo, Transferencia o Tarjeta):', 'Efectivo')
+    if (rawMethod === null) return
+    const paymentMethod = ['Efectivo', 'Transferencia', 'Tarjeta'].find((method) => clean(method) === clean(rawMethod.trim()))
+    if (!paymentMethod) {
+      setError('Elige Efectivo, Transferencia o Tarjeta para incluir la venta en el desglose del corte.')
+      return
+    }
     setError('')
     try {
-      await runTransaction(db, async (transaction) => {
+      const saleRef = doc(collection(db, 'empresas', companyId, 'ventasMostrador'))
+      const savedSale = await runTransaction(db, async (transaction) => {
         const productRef = doc(db, 'empresas', companyId, 'productos', product.id)
         const snapshot = await transaction.get(productRef)
         if (!snapshot.exists()) throw new Error('PRODUCT_NOT_FOUND')
-        const currentStock = Number(snapshot.data().stock) || 0
+        const productData = snapshot.data()
+        const currentStock = Number(productData.stock) || 0
         if (quantity > currentStock) throw new Error('INSUFFICIENT_STOCK')
+        const unitPrice = Number(productData.precio) || 0
+        if (unitPrice <= 0) throw new Error('INVALID_PRICE')
+        const total = unitPrice * quantity
+        const sale = {
+          folio: `M-${saleRef.id.slice(-6).toUpperCase()}`,
+          tipo: 'mostrador',
+          cliente: 'Venta en mostrador',
+          productos: [{ productoId: product.id, nombre: productData.nombre || product.nombre, precio: unitPrice, cantidad: quantity }],
+          total,
+          metodoPago: paymentMethod,
+          estado: 'Entregado',
+          entrega: dateKey(new Date()),
+          creadoEn: serverTimestamp(),
+          registradoPor: user.uid,
+        }
         transaction.update(productRef, { stock: currentStock - quantity })
+        transaction.set(saleRef, sale)
+        return { ...sale, creadoEn: new Date() }
       })
+      setCounterSales((current) => [{ ...savedSale, id: saleRef.id }, ...current.filter((sale) => sale.id !== saleRef.id)])
       setToast(`Venta en mostrador registrada: ${quantity} ${product.unidad || 'pzas'} de ${product.nombre}`)
       setTimeout(() => setToast(''), 2600)
     } catch (saleError) {
       setError(saleError.message === 'INSUFFICIENT_STOCK'
         ? `No hay suficiente stock de ${product.nombre}; se actualizó el catálogo con las existencias disponibles.`
-        : 'No se pudo registrar la venta. Verifica tu conexión y que tengas rol owner.')
+        : saleError.message === 'INVALID_PRICE'
+          ? `No se registró la venta porque ${product.nombre} no tiene un precio válido.`
+          : 'No se pudo registrar la venta y su pago. Verifica tu conexión, tu rol owner y las reglas de Firestore para ventasMostrador.')
     }
   }
 
@@ -675,12 +720,12 @@ function CashCloseDialog({ report, companyName, alreadySaved, saving, pdfError, 
   const upcoming = [...report.pendingToday, ...report.pendingTomorrow, ...report.cancelledUpcoming]
   return <div role="presentation" onClick={onClose} className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-slate-950/50 p-4"><section role="dialog" aria-modal="true" aria-label="Corte de caja del día" onClick={(event) => event.stopPropagation()} className="my-auto w-full max-w-4xl rounded-2xl bg-white p-5 shadow-2xl sm:p-7">
     <div className="flex items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">{companyName}</p><h2 className="mt-1 text-2xl font-bold text-slate-900">Corte de caja del día</h2><p className="mt-1 text-sm capitalize text-slate-500">{report.dateLabel} · Folio {report.folio}</p><p className="mt-1 text-xs text-slate-500">Responsable: {report.responsable} · Generado a las {report.closedAt}</p></div><button onClick={onClose} aria-label="Cerrar" className="grid size-9 shrink-0 place-items-center rounded-full bg-slate-100 text-lg text-slate-600">×</button></div>
-    <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><div className="rounded-xl bg-emerald-50 p-4"><p className="text-xs text-emerald-800">Ventas entregadas hoy</p><p className="mt-2 text-2xl font-bold text-emerald-900">{money.format(report.total)} MXN</p></div><div className="rounded-xl bg-slate-50 p-4"><p className="text-xs text-slate-500">Pedidos · unidades</p><p className="mt-2 text-2xl font-bold text-slate-900">{report.orderCount} · {report.unitsSold}</p></div><div className="rounded-xl bg-slate-50 p-4"><p className="text-xs text-slate-500">Ticket promedio</p><p className="mt-2 text-2xl font-bold text-slate-900">{money.format(report.ticketAverage)}</p></div><div className="rounded-xl bg-slate-50 p-4"><p className="text-xs text-slate-500">Ayer · 7 días previos</p><p className="mt-2 text-sm font-bold text-slate-900">{money.format(report.yesterdayTotal)} · {money.format(report.previousWeekTotal)}</p></div></div>
+    <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><div className="rounded-xl bg-emerald-50 p-4"><p className="text-xs text-emerald-800">Pedidos entregados + mostrador hoy</p><p className="mt-2 text-2xl font-bold text-emerald-900">{money.format(report.total)} MXN</p></div><div className="rounded-xl bg-slate-50 p-4"><p className="text-xs text-slate-500">Operaciones · unidades</p><p className="mt-2 text-2xl font-bold text-slate-900">{report.orderCount} · {report.unitsSold}</p></div><div className="rounded-xl bg-slate-50 p-4"><p className="text-xs text-slate-500">Ticket promedio</p><p className="mt-2 text-2xl font-bold text-slate-900">{money.format(report.ticketAverage)}</p></div><div className="rounded-xl bg-slate-50 p-4"><p className="text-xs text-slate-500">Ayer · 7 días previos</p><p className="mt-2 text-sm font-bold text-slate-900">{money.format(report.yesterdayTotal)} · {money.format(report.previousWeekTotal)}</p></div></div>
     <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(240px,.7fr)]"><section className="rounded-xl border border-slate-200 p-4"><h3 className="text-sm font-semibold text-slate-900">Producto estrella</h3><p className="mt-1 text-sm text-slate-600">{report.topProduct ? `${report.topProduct.nombre} · ${report.topProduct.cantidad} unidades` : 'No hay productos en pedidos entregados hoy.'}</p></section><section className="rounded-xl border border-slate-200 p-4"><h3 className="text-sm font-semibold text-slate-900">Método de pago registrado</h3>{report.paymentBreakdown.length ? <div className="mt-2 space-y-1.5">{report.paymentBreakdown.map((payment) => <p key={payment.metodo} className="flex justify-between gap-2 text-xs"><span className="text-slate-600">{payment.metodo} ({payment.cantidad})</span><strong>{money.format(payment.total)}</strong></p>)}</div> : <p className="mt-1 text-xs text-slate-500">No hay método de pago guardado en las órdenes.</p>}</section></div>
-    <section className="mt-5"><h3 className="text-sm font-semibold text-slate-900">Detalle de pedidos entregados hoy</h3><div className="mt-2 max-h-56 overflow-auto rounded-xl border border-slate-200"><table className="w-full min-w-[760px] text-left text-xs"><thead className="sticky top-0 bg-slate-50 text-slate-500"><tr><th className="px-3 py-2.5">Folio</th><th className="px-3 py-2.5">Hora de registro</th><th className="px-3 py-2.5">Cliente</th><th className="px-3 py-2.5">Productos</th><th className="px-3 py-2.5">Método</th><th className="px-3 py-2.5">Importe</th></tr></thead><tbody className="divide-y divide-slate-100">{report.deliveredOrders.map((order) => <tr key={order.folio}><td className="px-3 py-2.5 font-semibold">#{order.folio}</td><td className="px-3 py-2.5">{order.hora}</td><td className="px-3 py-2.5">{order.cliente}</td><td className="max-w-xs px-3 py-2.5 text-slate-600">{order.productos}</td><td className="px-3 py-2.5">{order.metodoPago}</td><td className="px-3 py-2.5 font-semibold">{money.format(order.total)}</td></tr>)}{!report.deliveredOrders.length && <tr><td colSpan="6" className="px-3 py-6 text-center text-slate-500">No hay pedidos entregados hoy.</td></tr>}</tbody></table></div></section>
+    <section className="mt-5"><h3 className="text-sm font-semibold text-slate-900">Pedidos entregados y ventas de mostrador hoy</h3><div className="mt-2 max-h-56 overflow-auto rounded-xl border border-slate-200"><table className="w-full min-w-[760px] text-left text-xs"><thead className="sticky top-0 bg-slate-50 text-slate-500"><tr><th className="px-3 py-2.5">Folio</th><th className="px-3 py-2.5">Hora de registro</th><th className="px-3 py-2.5">Cliente</th><th className="px-3 py-2.5">Productos</th><th className="px-3 py-2.5">Método</th><th className="px-3 py-2.5">Importe</th></tr></thead><tbody className="divide-y divide-slate-100">{report.deliveredOrders.map((order) => <tr key={order.folio}><td className="px-3 py-2.5 font-semibold">#{order.folio}</td><td className="px-3 py-2.5">{order.hora}</td><td className="px-3 py-2.5">{order.cliente}</td><td className="max-w-xs px-3 py-2.5 text-slate-600">{order.productos}</td><td className="px-3 py-2.5">{order.metodoPago}</td><td className="px-3 py-2.5 font-semibold">{money.format(order.total)}</td></tr>)}{!report.deliveredOrders.length && <tr><td colSpan="6" className="px-3 py-6 text-center text-slate-500">No hay pedidos ni ventas en mostrador hoy.</td></tr>}</tbody></table></div></section>
     <section className="mt-5"><h3 className="text-sm font-semibold text-slate-900">Pedidos por cobrar o entregar hoy y mañana</h3><div className="mt-2 max-h-48 overflow-auto rounded-xl border border-slate-200"><table className="w-full min-w-[700px] text-left text-xs"><thead className="sticky top-0 bg-slate-50 text-slate-500"><tr><th className="px-3 py-2.5">Entrega</th><th className="px-3 py-2.5">Folio</th><th className="px-3 py-2.5">Cliente</th><th className="px-3 py-2.5">Productos</th><th className="px-3 py-2.5">Estado</th><th className="px-3 py-2.5">Total</th><th className="px-3 py-2.5">Anticipo registrado</th><th className="px-3 py-2.5">Saldo estimado</th></tr></thead><tbody className="divide-y divide-slate-100">{upcoming.map((order, index) => <tr key={`${order.folio}-${index}`}><td className="px-3 py-2.5">{order.fechaLabel}</td><td className="px-3 py-2.5 font-semibold">#{order.folio}</td><td className="px-3 py-2.5">{order.cliente}</td><td className="max-w-xs px-3 py-2.5 text-slate-600">{order.productos}</td><td className="px-3 py-2.5">{order.estado}</td><td className="px-3 py-2.5">{money.format(order.total)}</td><td className="px-3 py-2.5">{order.anticipo ? money.format(order.anticipo) : "—"}</td><td className="px-3 py-2.5">{order.porCobrar === null ? "—" : money.format(order.porCobrar)}</td></tr>)}{!upcoming.length && <tr><td colSpan="8" className="px-3 py-6 text-center text-slate-500">No hay pedidos activos ni cancelados para hoy y mañana.</td></tr>}</tbody></table></div></section>
     <section className="mt-5"><div><h3 className="text-sm font-semibold text-slate-900">Reposición considerando pedidos de mañana</h3><p className="mt-1 text-xs text-slate-500">Los pedidos del chat con reserva ya descontaron su stock; se restan solo órdenes sin reserva para evitar doble conteo.</p></div><div className="mt-2 max-h-44 overflow-auto rounded-xl border border-slate-200"><table className="w-full min-w-[680px] text-left text-xs"><thead className="sticky top-0 bg-slate-50 text-slate-500"><tr><th className="px-3 py-2.5">Producto</th><th className="px-3 py-2.5">Stock actual</th><th className="px-3 py-2.5">Pedido mañana</th><th className="px-3 py-2.5">Disponible ajustado</th><th className="px-3 py-2.5">Mínimo</th><th className="px-3 py-2.5">Surtir</th></tr></thead><tbody className="divide-y divide-slate-100">{report.replenishment.map((item) => <tr key={item.nombre}><td className="px-3 py-2.5 font-medium">{item.nombre}</td><td className="px-3 py-2.5">{item.stockActual} {item.unidad}</td><td className="px-3 py-2.5">{item.pedidosManana} {item.unidad}</td><td className="px-3 py-2.5">{item.disponibleTrasPedidos} {item.unidad}</td><td className="px-3 py-2.5">{item.minimo} {item.unidad}</td><td className="px-3 py-2.5 font-semibold text-amber-800">+{item.reponer} {item.unidad}</td></tr>)}{!report.replenishment.length && <tr><td colSpan="6" className="px-3 py-6 text-center text-slate-500">No hay productos bajo mínimo después de considerar los pedidos de mañana.</td></tr>}</tbody></table></div></section>
-    <p className="mt-4 rounded-lg bg-slate-50 p-3 text-[11px] leading-relaxed text-slate-500">Este sistema no registra todavía el efectivo contado/fondo inicial, gastos, retiros, propinas ni la fecha de cobro de anticipos y abonos. No se muestran descuentos, devoluciones, mermas ni IVA porque esos campos no existen en las órdenes. El método de pago se desglosa solo si ya está guardado. Las ventas en mostrador solo descuentan stock, no se guardan como transacciones y quedan fuera del total. El inventario registra productos, no ingredientes ni recetas.</p>
+    <p className="mt-4 rounded-lg bg-slate-50 p-3 text-[11px] leading-relaxed text-slate-500">El corte ya incluye ventas en mostrador con método de pago registrado. Este sistema no registra todavía efectivo contado/fondo inicial, gastos, retiros, propinas ni la fecha de cobro de anticipos y abonos. Tampoco incluye descuentos, devoluciones, mermas ni IVA porque esos campos no existen en las órdenes. El inventario registra productos, no ingredientes ni recetas.</p>
     {pdfError && <p role="alert" className="mt-3 rounded-lg bg-rose-50 p-3 text-xs text-rose-800">{pdfError}</p>}
     <div className="mt-6 flex flex-wrap justify-end gap-2"><button onClick={onClose} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-50">Cerrar</button><button onClick={onPrint} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50">Exportar PDF</button><button onClick={onSave} disabled={saving} className="rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800 disabled:opacity-50">{saving ? 'Guardando…' : alreadySaved ? 'Actualizar corte guardado' : 'Guardar cierre del día'}</button></div>
   </section></div>
